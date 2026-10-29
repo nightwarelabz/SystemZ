@@ -270,7 +270,16 @@ BIRTH=""
 SHOW_TAIL=0
 if grep -q 'vmx: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
-  BIRTH_WHY="VMX path: $(line 'vmx: GUEST BORN')"
+  if grep -q 'born on the canonical bisect state' "$LOG"; then
+    # Born — but on the bisect's hand-built canonical state, not
+    # on the mirror ZCore would actually fly. The guest program
+    # ran, which IS a birth; the mirror state is still refused,
+    # which is the standing defect. The verdict carries both
+    # facts, distinctly, and neither upgrades the other.
+    BIRTH_WHY="born via canonical bisect state; mirror state still refused — the bisect diff in the log names the fields where the two stored states differ. ($(line 'vmx: GUEST BORN'))"
+  else
+    BIRTH_WHY="VMX path: $(line 'vmx: GUEST BORN')"
+  fi
 elif grep -q 'svm: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
   BIRTH_WHY="SVM path: $(line 'svm: GUEST BORN')"
@@ -297,7 +306,15 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     12) REASON_NAME="HLT exit — the guest ran but halted before its CPUID; not the birth sequence" ;;
     *)  REASON_NAME="not classified here — the log line itself is the evidence" ;;
   esac
-  BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME): $(line 'vmx: guest birth FAILED')"
+  if grep -q 'vmx: bisect exit #1 reason' "$LOG"; then
+    # The mirror's refusal (reason 33) armed the canonical bisect
+    # and the bisect was refused too: both stored states failed
+    # entry, so the refusal lives in the block the two attempts
+    # share. Say that, and point at the dumps.
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the canonical bisect was also refused: $(line 'vmx: bisect exit #1 reason') — both states refused at entry, so the refusal lives in the block they share (controls, CRs, EFER, non-register state); the read-back dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
+  else
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME): $(line 'vmx: guest birth FAILED')"
+  fi
 elif [ -n "$(line 'vmx: guest birth incomplete')" ]; then
   BIRTH="NOT proven"; BIRTH_WHY="$(line 'vmx: guest birth incomplete')"
 elif [ -n "$(line 'vmx: could not advance')" ]; then

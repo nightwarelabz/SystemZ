@@ -1016,6 +1016,12 @@ struct VmxRegs {
 static mut VMXON_REGION: AlignedPage = AlignedPage([0; 4096]);
 static mut VMCS_REGION: AlignedPage = AlignedPage([0; 4096]);
 static mut VMX_GUEST_STACK: AlignedPage = AlignedPage([0; 4096]);
+// The canonical bisect's own tables (see build_canonical_tables):
+// a GDT and a 64-bit TSS image that belong to ZCore and to nobody
+// else — the guest state of the second attempt is built on these,
+// not on the host's live tables.
+static mut CANON_GDT: AlignedPage = AlignedPage([0; 4096]);
+static mut CANON_TSS: AlignedPage = AlignedPage([0; 4096]);
 
 // VMX MSRs (Intel SDM Vol. 4).
 mod msr_vmx {
@@ -1062,12 +1068,15 @@ mod vf {
     pub const H_TR_SEL: u64 = 0x0C0C;
     // 64-bit guest / host state
     pub const G_LINK_PTR: u64 = 0x2800;
+    pub const G_DEBUGCTL: u64 = 0x2802;
     pub const G_PAT: u64 = 0x2804;
     pub const G_EFER: u64 = 0x2806;
+    pub const G_PERF_GLOBAL: u64 = 0x2808;
     pub const H_EFER: u64 = 0x2C02;
     // 32-bit control
     pub const PIN_CTLS: u64 = 0x4000;
     pub const PROC_CTLS: u64 = 0x4002;
+    pub const PROC_CTLS2: u64 = 0x401E;
     pub const EXC_BITMAP: u64 = 0x4004;
     pub const PF_ERR_MASK: u64 = 0x4006;
     pub const PF_ERR_MATCH: u64 = 0x4008;
@@ -1081,6 +1090,9 @@ mod vf {
     // 32-bit read-only
     pub const INSTR_ERROR: u64 = 0x4400;
     pub const EXIT_REASON: u64 = 0x4402;
+    pub const EXIT_INT_INFO: u64 = 0x4404;
+    // natural-width read-only
+    pub const EXIT_QUAL: u64 = 0x6400;
     // 32-bit guest state
     pub const G_ES_LIM: u64 = 0x4800;
     pub const G_CS_LIM: u64 = 0x4802;
@@ -1168,11 +1180,14 @@ fn vf_name(field: u64) -> &'static str {
         H_GS_SEL => "host GS selector",
         H_TR_SEL => "host TR selector",
         G_LINK_PTR => "guest VMCS link pointer",
+        G_DEBUGCTL => "guest IA32_DEBUGCTL",
         G_PAT => "guest IA32_PAT",
         G_EFER => "guest IA32_EFER",
+        G_PERF_GLOBAL => "guest IA32_PERF_GLOBAL_CTRL",
         H_EFER => "host IA32_EFER",
         PIN_CTLS => "pin-based controls",
         PROC_CTLS => "primary processor-based controls",
+        PROC_CTLS2 => "secondary processor-based controls",
         EXC_BITMAP => "exception bitmap",
         PF_ERR_MASK => "page-fault error-code mask",
         PF_ERR_MATCH => "page-fault error-code match",
@@ -1185,6 +1200,8 @@ fn vf_name(field: u64) -> &'static str {
         ENTRY_INT_INFO => "entry interruption information",
         INSTR_ERROR => "VM-instruction error (read-only)",
         EXIT_REASON => "exit reason (read-only)",
+        EXIT_INT_INFO => "exit interruption information (read-only)",
+        EXIT_QUAL => "exit qualification (read-only)",
         G_ES_LIM => "guest ES limit",
         G_CS_LIM => "guest CS limit",
         G_SS_LIM => "guest SS limit",
@@ -1549,25 +1566,10 @@ fn vmx_first_guest() {
 
     // ---- VMCS ----
     let vmcs_pa = core::ptr::addr_of!(VMCS_REGION) as u64;
-    unsafe {
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(VMCS_REGION) as *mut u8, 0, 4096);
-        // VMCS revision ID; bit 31 clear = this is not a shadow VMCS.
-        core::ptr::write_unaligned(core::ptr::addr_of_mut!(VMCS_REGION) as *mut u32, revision as u32);
-    }
-    let (cf, zf) = unsafe { vmx_op_pa(1, vmcs_pa) };
-    if cf || zf {
-        sprint!("vmx: VMCLEAR FAILED (cf {} zf {}) — twin path stops\r\n", cf as u8, zf as u8);
+    if !vmx_prepare_vmcs(vmcs_pa, revision) {
         vmx_teardown(vmcs_pa, false, orig_cr0, orig_cr4);
         return;
     }
-    let (cf, zf) = unsafe { vmx_op_pa(2, vmcs_pa) };
-    if cf || zf {
-        sprint!("vmx: VMPTRLD FAILED (cf {} zf {}) — twin path stops\r\n", cf as u8, zf as u8);
-        vmx_teardown(vmcs_pa, false, orig_cr0, orig_cr4);
-        return;
-    }
-    sprint!("vmx: VMCS region {:#x} (revision {}, shadow indicator clear) — VMCLEAR + VMPTRLD ok\r\n",
-            vmcs_pa, revision);
 
     // ---- controls, computed from the capability MSRs ----
     let pin_msr = if use_true { msr_vmx::TRUE_PINBASED } else { msr_vmx::PINBASED };
@@ -1597,46 +1599,324 @@ fn vmx_first_guest() {
             pin_ctls, proc_ctls, exit_ctls, entry_ctls);
     sprint!("vmx: intercept policy mirrors the SVM path: HLT exiting armed; CPUID exits unconditionally (no control bit exists); EPT untouched — secondary controls off, EPTP never written; EPT is the next groundwork step\r\n");
 
-    // ---- the guest world: the host's own, mirrored (and translated) ----
+    // ---- the guest world snapshot: everything the attempts share ----
+    // One machine, read once. The controls, the adjusted CRs, the
+    // host-state pieces and the shared guest block (CRs, EFER, PAT,
+    // SYSENTER, link pointer, RIP/RSP/RFLAGS) are IDENTICAL for the
+    // mirror attempt and the canonical bisect — that identity is
+    // what makes the second attempt a bisection rather than a
+    // second guess. Only the segment block (GuestSegs) differs.
     let efer_now = rdmsr(msr_vmx::EFER);
-    // Guest EFER: host bits SCE|LME|NXE only — LMA is entry-derived,
-    // and AMD-only bits (SVME & friends) would be reserved-bit entry
-    // failures on Intel. The mirror is translated, not copied.
-    let guest_efer = efer_now & 0x901;
-    let guest_cr0 = orig_cr0;
-    let guest_cr3 = orig_cr3;
-    let guest_cr4 = orig_cr4 & !(1 << 13); // a guest does not hold VMXE
     let (cs, ss, ds, es, fs, gs, tr, ldtr) = seg_selectors();
     let (gdt_base, gdt_limit, idt_base, idt_limit) = dt_regs();
     let dr7: u64;
     unsafe { asm!("mov {}, dr7", out(reg) dr7, options(nostack)) };
-    let code_pa = GUEST_CODE.as_ptr() as u64;
-    let guest_rsp = core::ptr::addr_of!(VMX_GUEST_STACK) as u64 + 4096;
+    let world = VmxWorld {
+        pin_ctls, proc_ctls, exit_ctls, entry_ctls,
+        adj_cr0, adj_cr4, orig_cr0, orig_cr3, orig_cr4,
+        efer_now,
+        // Guest EFER: host bits SCE|LME|NXE only — LMA is
+        // entry-derived, and AMD-only bits (SVME & friends) would
+        // be reserved-bit entry failures on Intel. The mirror is
+        // translated, not copied.
+        guest_efer: efer_now & 0x901,
+        guest_cr0: orig_cr0,
+        guest_cr3: orig_cr3,
+        guest_cr4: orig_cr4 & !(1 << 13), // a guest does not hold VMXE
+        cs, ss, ds, es, fs, gs, tr, ldtr,
+        gdt_base, gdt_limit, idt_base, idt_limit,
+        dr7,
+        code_pa: GUEST_CODE.as_ptr() as u64,
+        guest_rsp: core::ptr::addr_of!(VMX_GUEST_STACK) as u64 + 4096,
+    };
+    let mirror = mirror_segs(&world);
 
-    // Every write is counted, and every FAILURE is named on the
-    // serial line the moment it happens — field encoding, field
-    // name, value attempted. The first failure also captures the
-    // VM-instruction error number (VMREAD of field 0x4400) before
-    // anything else can overwrite it: that number is the hardware's
-    // own classification of the rejection (12 = VMREAD/VMWRITE
-    // from/to an unsupported VMCS component, 13 = VMWRITE to a
-    // read-only component, per the SDM's VM-instruction error
-    // table — run 3's error 12 for the nonexistent field 0xC0E is
-    // the table agreeing with itself). This instrumentation
-    // exists because the first KVM run (2026-10-29) reported only
-    // the bare count — "57 VMCS field writes FAILED" — which could
-    // not distinguish a bad field, a bad ordering, or a bad state.
-    // A count is not a diagnosis; names and the error number are.
-    let mut wfail = 0u32;
-    let mut wcount = 0u32;
-    let mut first_fail: Option<(u64, u64)> = None; // (field, instr error)
-    let mut w = |field: u64, value: u64| {
-        wcount += 1;
+    // ---- attempt 1: the mirror (the production path, unchanged) ----
+    let mut stored_mirror = Stored::new();
+    match vmx_attempt(&world, &mirror, false, None, vmcs_pa, &mut stored_mirror) {
+        Attempt::Refused33 => {}
+        _ => return,
+    }
+
+    // ---- attempt 2: the canonical bisect (diagnostic) ----
+    // The mirror was refused at entry (reason 33) with its read-back
+    // dump on the record above; teardown already happened inside
+    // the attempt. Re-enter VMX and launch the same 7-byte program
+    // on a hand-built canonical guest state. If the canonical state
+    // enters, the mirror inherits a poisoned field and the dump
+    // diff names it; if both are refused, the refusal lives in the
+    // block the attempts share.
+    sprint!("vmx: bisect: the mirror guest state was refused at entry (reason 33) — bisecting with a hand-built canonical guest state in the same boot\r\n");
+    write_cr(0, adj_cr0);
+    write_cr(4, adj_cr4);
+    unsafe {
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u8, 0, 4096);
+        core::ptr::write_unaligned(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u32, revision as u32);
+    }
+    let (cf, zf) = unsafe { vmx_op_pa(0, vmxon_pa) };
+    if cf || zf {
+        sprint!("vmx: bisect: VMXON FAILED on re-entry (cf {} zf {}) — the bisect cannot run; the mirror's evidence stands\r\n", cf as u8, zf as u8);
+        write_cr(0, orig_cr0);
+        write_cr(4, orig_cr4);
+        return;
+    }
+    sprint!("vmx: bisect: VMX re-entered (cr0/cr4 re-adjusted to {:#x}/{:#x}, VMXON ok)\r\n", adj_cr0, adj_cr4);
+    if !vmx_prepare_vmcs(vmcs_pa, revision) {
+        vmx_teardown(vmcs_pa, false, orig_cr0, orig_cr4);
+        return;
+    }
+    build_canonical_tables();
+    let canonical = canonical_segs(&world);
+    let mut stored_canon = Stored::new();
+    let _ = vmx_attempt(&world, &canonical, true, Some(&stored_mirror), vmcs_pa, &mut stored_canon);
+    // Every bisect outcome is terminal for this boot; the birth (or
+    // the refusal) and the teardown are already on the record.
+}
+
+/// Everything both VMX guest attempts share, read once from the
+/// live machine: the capability-computed controls, the VMX-adjusted
+/// CRs the host state needs, and the shared guest block. Keeping
+/// these in one struct is what guarantees the bisect's premise —
+/// the two attempts differ ONLY in their GuestSegs.
+struct VmxWorld {
+    pin_ctls: u32,
+    proc_ctls: u32,
+    exit_ctls: u32,
+    entry_ctls: u32,
+    adj_cr0: u64,
+    adj_cr4: u64,
+    orig_cr0: u64,
+    orig_cr3: u64,
+    orig_cr4: u64,
+    efer_now: u64,
+    guest_efer: u64,
+    guest_cr0: u64,
+    guest_cr3: u64,
+    guest_cr4: u64,
+    cs: u16,
+    ss: u16,
+    ds: u16,
+    es: u16,
+    fs: u16,
+    gs: u16,
+    tr: u16,
+    ldtr: u16,
+    gdt_base: u64,
+    gdt_limit: u32,
+    idt_base: u64,
+    idt_limit: u32,
+    dr7: u64,
+    code_pa: u64,
+    guest_rsp: u64,
+}
+
+/// The guest segment block — the ONLY part of the guest state the
+/// two attempts build differently. Arrays are indexed in the
+/// order ES, CS, SS, DS, FS, GS, LDTR, TR throughout.
+struct GuestSegs {
+    sel: [u16; 8],
+    base: [u64; 8],
+    lim: [u32; 8],
+    ar: [u32; 8],
+    gdtr_base: u64,
+    gdtr_lim: u32,
+    idtr_base: u64,
+    idtr_lim: u32,
+}
+
+/// The mirror's segment block: every value derived from the host's
+/// live state (selectors the CPU holds, LAR/LSL against its GDT,
+/// bases parsed out of its descriptors) — the derivation the runs
+/// have always flown.
+fn mirror_segs(w: &VmxWorld) -> GuestSegs {
+    let sels = [w.es, w.cs, w.ss, w.ds, w.fs, w.gs, w.ldtr, w.tr];
+    let mut base = [0u64; 8];
+    let mut lim = [0u32; 8];
+    let mut ar = [0u32; 8];
+    for i in 0..8 {
+        base[i] = gdt_desc_base(w.gdt_base, sels[i]);
+        lim[i] = seg_limit(sels[i]);
+        ar[i] = seg_ar(sels[i]);
+    }
+    // FS/GS bases are MSR state on this machine, not GDT state —
+    // the mirror takes them from the MSRs, as it always has.
+    base[4] = rdmsr(msr_vmx::FS_BASE);
+    base[5] = rdmsr(msr_vmx::GS_BASE);
+    GuestSegs {
+        sel: sels,
+        base,
+        lim,
+        ar,
+        gdtr_base: w.gdt_base,
+        gdtr_lim: w.gdt_limit,
+        idtr_base: w.idt_base,
+        idtr_lim: w.idt_limit,
+    }
+}
+
+/// Build the bisect's own descriptor tables in CANON_GDT /
+/// CANON_TSS. The table is real — its address is what the guest
+/// GDTR field will carry — and every value in it is a constant
+/// chosen entry-legal by construction (see canonical_segs).
+fn build_canonical_tables() {
+    let gdt = core::ptr::addr_of_mut!(CANON_GDT) as *mut u64;
+    let tss = core::ptr::addr_of!(CANON_TSS) as u64;
+    unsafe {
+        core::ptr::write_bytes(gdt as *mut u8, 0, 4096);
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(CANON_TSS) as *mut u8, 0, 4096);
+        // Entry 0: null. Entry 1 (selector 0x08): flat 64-bit code —
+        // base 0, limit 0xFFFFF pages (G=1 => 0xFFFFFFFF), access
+        // 0x9B (code R/X accessed, ring 0, present), flags nibble
+        // 0xA (G=1, D/B=0, L=1): the descriptor whose VMCS access
+        // rights are 0xA09B.
+        core::ptr::write_unaligned(gdt.add(1), 0x00AF_9B00_0000_FFFFu64);
+        // Entry 2 (selector 0x10): flat data — access 0x93 (data
+        // R/W accessed, ring 0, present), flags 0xC (G=1, D/B=1):
+        // access rights 0xC093, limit 0xFFFFFFFF.
+        core::ptr::write_unaligned(gdt.add(2), 0x00CF_9300_0000_FFFFu64);
+        // Entries 3–4 (selector 0x18): the 64-bit TSS descriptor,
+        // 16 bytes — limit 0x67 (a 104-byte TSS), base = CANON_TSS,
+        // access 0x8B: type 11, BUSY. Section 26.3.1.2 requires the
+        // guest TR's type to be 11; a TSS image nobody has loaded
+        // would be type 9 (available), so the descriptor is born
+        // busy — the entry checks judge the VMCS fields, and the
+        // 7-byte guest never task-switches.
+        let lo = 0x67u64
+            | ((tss & 0xFFFF) << 16)
+            | (((tss >> 16) & 0xFF) << 32)
+            | (0x8Bu64 << 40)
+            | (((tss >> 24) & 0xFF) << 56);
+        core::ptr::write_unaligned(gdt.add(3), lo);
+        core::ptr::write_unaligned(gdt.add(4), tss >> 32);
+        // The TSS image itself: all zero except the I/O-permission
+        // bitmap base at offset 102, set just past the 104-byte
+        // TSS (no bitmap follows).
+        core::ptr::write_unaligned((tss as *mut u8).add(102) as *mut u16, 104u16);
+    }
+}
+
+/// The bisect's segment block: hand-built canonical constants on
+/// ZCore's own tables — nothing here is read from the host.
+///
+/// Entry-legality, per §26.3.1.2/.3, value by value: code and data
+/// descriptors are the flat ring-0 pair (CS type 11 nonconforming
+/// with DPL 0 = SS DPL 0; SS type 3 with DPL = its selector's RPL
+/// 0; data type 3 accessed with DPL >= RPL 0; every usable AR has
+/// bits 11:8 = 0, bits 31:17 = 0, and G = 1 as the 0xFFFFFFFF
+/// limits require; CS has the IA-32e pair L = 1, D/B = 0). All
+/// bases are 0 (canonical, and CS/SS/DS/ES keep bits 63:32 = 0 as
+/// required) except TR's, which is CANON_TSS's own address. LDTR
+/// is the unusable constant (selector 0, AR 0x10000) — exempt from
+/// the usable-segment checks. TR: selector 0x18 (TI = 0), limit
+/// 0x67 with G = 0 — §26.3.1.2 requires G = 0 when a 0 bit appears
+/// in limit bits 11:0, and 0x67 has them. GDTR names
+/// build_canonical_tables' table: base canonical, limit 0x27 (40
+/// bytes: null, code, data, the two TSS qwords), bits 31:16 = 0.
+/// IDTR is the one mirrored piece, deliberately and stated: the
+/// guest runs 7 bytes with IF clear (RFLAGS 0x2) and entry
+/// injects nothing, so the IDT is never dereferenced — entry only
+/// needs its base canonical and its limit's high bits zero, which
+/// the live IDTR satisfies.
+fn canonical_segs(w: &VmxWorld) -> GuestSegs {
+    GuestSegs {
+        sel: [0x10, 0x08, 0x10, 0x10, 0x10, 0x10, 0, 0x18],
+        base: [0, 0, 0, 0, 0, 0, 0, core::ptr::addr_of!(CANON_TSS) as u64],
+        lim: [0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF,
+              0xFFFF_FFFF, 0xFFFF_FFFF, 0, 0x67],
+        ar: [0xC093, 0xA09B, 0xC093, 0xC093, 0xC093, 0xC093, 0x10000, 0x8B],
+        gdtr_base: core::ptr::addr_of!(CANON_GDT) as u64,
+        gdtr_lim: 0x27,
+        idtr_base: w.idt_base,
+        idtr_lim: w.idt_limit,
+    }
+}
+
+/// Zero the VMCS region, stamp the revision ID, VMCLEAR, VMPTRLD.
+/// Used for the first attempt and again, identically, for the
+/// bisect's second VMCS. Failure lines print here; the caller owns
+/// the teardown decision.
+fn vmx_prepare_vmcs(vmcs_pa: u64, revision: u64) -> bool {
+    unsafe {
+        core::ptr::write_bytes(vmcs_pa as *mut u8, 0, 4096);
+        // VMCS revision ID; bit 31 clear = this is not a shadow VMCS.
+        core::ptr::write_unaligned(vmcs_pa as *mut u32, revision as u32);
+    }
+    let (cf, zf) = unsafe { vmx_op_pa(1, vmcs_pa) };
+    if cf || zf {
+        sprint!("vmx: VMCLEAR FAILED (cf {} zf {}) — twin path stops\r\n", cf as u8, zf as u8);
+        return false;
+    }
+    let (cf, zf) = unsafe { vmx_op_pa(2, vmcs_pa) };
+    if cf || zf {
+        sprint!("vmx: VMPTRLD FAILED (cf {} zf {}) — twin path stops\r\n", cf as u8, zf as u8);
+        return false;
+    }
+    sprint!("vmx: VMCS region {:#x} (revision {}, shadow indicator clear) — VMCLEAR + VMPTRLD ok\r\n",
+            vmcs_pa, revision);
+    true
+}
+
+/// The record of what a fill INTENDED to write, field by field —
+/// the read-back dump judges the VMCS against this, not against a
+/// second derivation of the same values.
+struct WriteRec {
+    fields: [u64; 96],
+    values: [u64; 96],
+    n: usize,
+}
+
+impl WriteRec {
+    fn new() -> Self {
+        WriteRec { fields: [0; 96], values: [0; 96], n: 0 }
+    }
+    fn get(&self, field: u64) -> Option<u64> {
+        for i in 0..self.n {
+            if self.fields[i] == field {
+                return Some(self.values[i]);
+            }
+        }
+        None
+    }
+}
+
+/// The VMCS writer for one attempt: counts every write, records
+/// every intended (field, value), and names every FAILURE on the
+/// serial line the moment it happens — field encoding, field
+/// name, value attempted. The first failure also captures the
+/// VM-instruction error number (VMREAD of field 0x4400) before
+/// anything else can overwrite it: that number is the hardware's
+/// own classification of the rejection (12 = VMREAD/VMWRITE
+/// from/to an unsupported VMCS component, 13 = VMWRITE to a
+/// read-only component, per the SDM's VM-instruction error table —
+/// run 3's error 12 for the nonexistent field 0xC0E is the table
+/// agreeing with itself). This instrumentation exists because the
+/// first KVM run (2026-10-29) reported only the bare count — "57
+/// VMCS field writes FAILED" — which could not distinguish a bad
+/// field, a bad ordering, or a bad state. A count is not a
+/// diagnosis; names and the error number are.
+struct Fill {
+    wfail: u32,
+    wcount: u32,
+    first_fail: Option<(u64, u64)>,
+    rec: WriteRec,
+}
+
+impl Fill {
+    fn new() -> Self {
+        Fill { wfail: 0, wcount: 0, first_fail: None, rec: WriteRec::new() }
+    }
+    fn w(&mut self, field: u64, value: u64) {
+        self.wcount += 1;
+        if self.rec.n < 96 {
+            self.rec.fields[self.rec.n] = field;
+            self.rec.values[self.rec.n] = value;
+            self.rec.n += 1;
+        }
         if !vmwrite_checked(field, value) {
-            wfail += 1;
-            if first_fail.is_none() {
+            self.wfail += 1;
+            if self.first_fail.is_none() {
                 let err = vmread_checked(vf::INSTR_ERROR).unwrap_or(0);
-                first_fail = Some((field, err));
+                self.first_fail = Some((field, err));
                 sprint!("vmx: write FAILED: field {:#x} ({}) = {:#x} — VM-instruction error {} (first failure; class per the SDM error table)\r\n",
                         field, vf_name(field), value, err);
             } else {
@@ -1644,24 +1924,33 @@ fn vmx_first_guest() {
                         field, vf_name(field), value);
             }
         }
-    };
+    }
+}
+
+/// Fill the current VMCS for one attempt: the shared controls and
+/// host state from `w`, the guest state from `w` + `s`. The write
+/// ORDER and the mid-fill control read-back are exactly what the
+/// mirror attempt has always flown; the bisect flies the same
+/// sequence with only the guest segment block (and GDTR) sourced
+/// from `s` instead of the mirror's derivations.
+fn vmx_fill(f: &mut Fill, w: &VmxWorld, s: &GuestSegs) {
     // Control fields.
-    w(vf::PIN_CTLS, pin_ctls as u64);
-    w(vf::PROC_CTLS, proc_ctls as u64);
-    w(vf::EXC_BITMAP, 0);
-    w(vf::PF_ERR_MASK, 0);
-    w(vf::PF_ERR_MATCH, 0);
-    w(vf::CR3_TGT_COUNT, 0);
-    w(vf::EXIT_CTLS, exit_ctls as u64);
-    w(vf::EXIT_MSR_STORE, 0);
-    w(vf::EXIT_MSR_LOAD, 0);
-    w(vf::ENTRY_CTLS, entry_ctls as u64);
-    w(vf::ENTRY_MSR_LOAD, 0);
-    w(vf::ENTRY_INT_INFO, 0);
-    w(vf::CR0_MASK, 0); // the host owns no CR bits; the guest sees its own
-    w(vf::CR4_MASK, 0);
-    w(vf::CR0_SHADOW, guest_cr0);
-    w(vf::CR4_SHADOW, guest_cr4);
+    f.w(vf::PIN_CTLS, w.pin_ctls as u64);
+    f.w(vf::PROC_CTLS, w.proc_ctls as u64);
+    f.w(vf::EXC_BITMAP, 0);
+    f.w(vf::PF_ERR_MASK, 0);
+    f.w(vf::PF_ERR_MATCH, 0);
+    f.w(vf::CR3_TGT_COUNT, 0);
+    f.w(vf::EXIT_CTLS, w.exit_ctls as u64);
+    f.w(vf::EXIT_MSR_STORE, 0);
+    f.w(vf::EXIT_MSR_LOAD, 0);
+    f.w(vf::ENTRY_CTLS, w.entry_ctls as u64);
+    f.w(vf::ENTRY_MSR_LOAD, 0);
+    f.w(vf::ENTRY_INT_INFO, 0);
+    f.w(vf::CR0_MASK, 0); // the host owns no CR bits; the guest sees its own
+    f.w(vf::CR4_MASK, 0);
+    f.w(vf::CR0_SHADOW, w.guest_cr0);
+    f.w(vf::CR4_SHADOW, w.guest_cr4);
     // Reporter check, before the remaining writes are trusted to
     // the same reporter: read the four control fields back and
     // compare against what was written. Three outcomes, three
@@ -1675,10 +1964,10 @@ fn vmx_first_guest() {
     //     re-opens the state question entirely.
     {
         let rb = [
-            ("pin-based", vf::PIN_CTLS, pin_ctls as u64),
-            ("primary processor-based", vf::PROC_CTLS, proc_ctls as u64),
-            ("VM-exit", vf::EXIT_CTLS, exit_ctls as u64),
-            ("VM-entry", vf::ENTRY_CTLS, entry_ctls as u64),
+            ("pin-based", vf::PIN_CTLS, w.pin_ctls as u64),
+            ("primary processor-based", vf::PROC_CTLS, w.proc_ctls as u64),
+            ("VM-exit", vf::EXIT_CTLS, w.exit_ctls as u64),
+            ("VM-entry", vf::ENTRY_CTLS, w.entry_ctls as u64),
         ];
         let mut rb_bad = 0u32;
         for (name, field, written) in rb {
@@ -1701,142 +1990,404 @@ fn vmx_first_guest() {
         }
     }
     // Host state: the machine as it stands now (the exit lands here).
-    w(vf::H_CR0, adj_cr0);
-    w(vf::H_CR3, orig_cr3);
-    w(vf::H_CR4, adj_cr4);
-    w(vf::H_ES_SEL, es as u64);
-    w(vf::H_CS_SEL, cs as u64);
-    w(vf::H_SS_SEL, ss as u64);
-    w(vf::H_DS_SEL, ds as u64);
-    w(vf::H_FS_SEL, fs as u64);
-    w(vf::H_GS_SEL, gs as u64);
-    w(vf::H_TR_SEL, tr as u64);
-    w(vf::H_FS_BASE, rdmsr(msr_vmx::FS_BASE));
-    w(vf::H_GS_BASE, rdmsr(msr_vmx::GS_BASE));
-    w(vf::H_TR_BASE, gdt_desc_base(gdt_base, tr));
-    w(vf::H_GDTR_BASE, gdt_base);
-    w(vf::H_IDTR_BASE, idt_base);
-    w(vf::H_SYSENTER_CS, rdmsr(msr_vmx::SYSENTER_CS) & 0xFFFF_FFFF);
-    w(vf::H_SYSENTER_ESP, rdmsr(msr_vmx::SYSENTER_ESP));
-    w(vf::H_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
-    w(vf::H_EFER, efer_now);
+    f.w(vf::H_CR0, w.adj_cr0);
+    f.w(vf::H_CR3, w.orig_cr3);
+    f.w(vf::H_CR4, w.adj_cr4);
+    f.w(vf::H_ES_SEL, w.es as u64);
+    f.w(vf::H_CS_SEL, w.cs as u64);
+    f.w(vf::H_SS_SEL, w.ss as u64);
+    f.w(vf::H_DS_SEL, w.ds as u64);
+    f.w(vf::H_FS_SEL, w.fs as u64);
+    f.w(vf::H_GS_SEL, w.gs as u64);
+    f.w(vf::H_TR_SEL, w.tr as u64);
+    f.w(vf::H_FS_BASE, rdmsr(msr_vmx::FS_BASE));
+    f.w(vf::H_GS_BASE, rdmsr(msr_vmx::GS_BASE));
+    f.w(vf::H_TR_BASE, gdt_desc_base(w.gdt_base, w.tr));
+    f.w(vf::H_GDTR_BASE, w.gdt_base);
+    f.w(vf::H_IDTR_BASE, w.idt_base);
+    f.w(vf::H_SYSENTER_CS, rdmsr(msr_vmx::SYSENTER_CS) & 0xFFFF_FFFF);
+    f.w(vf::H_SYSENTER_ESP, rdmsr(msr_vmx::SYSENTER_ESP));
+    f.w(vf::H_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
+    f.w(vf::H_EFER, w.efer_now);
     // HOST_RSP / HOST_RIP are the bridge's to write (see section header).
-    // Guest state: the host's world, mirrored.
-    w(vf::G_LINK_PTR, u64::MAX);
-    w(vf::G_PAT, rdmsr(msr_vmx::PAT));
-    w(vf::G_EFER, guest_efer);
-    w(vf::G_CR0, guest_cr0);
-    w(vf::G_CR3, guest_cr3);
-    w(vf::G_CR4, guest_cr4);
-    w(vf::G_ES_SEL, es as u64);
-    w(vf::G_CS_SEL, cs as u64);
-    w(vf::G_SS_SEL, ss as u64);
-    w(vf::G_DS_SEL, ds as u64);
-    w(vf::G_FS_SEL, fs as u64);
-    w(vf::G_GS_SEL, gs as u64);
-    w(vf::G_LDTR_SEL, ldtr as u64);
-    w(vf::G_TR_SEL, tr as u64);
-    w(vf::G_ES_BASE, gdt_desc_base(gdt_base, es));
-    w(vf::G_CS_BASE, gdt_desc_base(gdt_base, cs));
-    w(vf::G_SS_BASE, gdt_desc_base(gdt_base, ss));
-    w(vf::G_DS_BASE, gdt_desc_base(gdt_base, ds));
-    w(vf::G_FS_BASE, rdmsr(msr_vmx::FS_BASE));
-    w(vf::G_GS_BASE, rdmsr(msr_vmx::GS_BASE));
-    w(vf::G_LDTR_BASE, gdt_desc_base(gdt_base, ldtr));
-    w(vf::G_TR_BASE, gdt_desc_base(gdt_base, tr));
-    w(vf::G_GDTR_BASE, gdt_base);
-    w(vf::G_IDTR_BASE, idt_base);
-    w(vf::G_ES_LIM, seg_limit(es) as u64);
-    w(vf::G_CS_LIM, seg_limit(cs) as u64);
-    w(vf::G_SS_LIM, seg_limit(ss) as u64);
-    w(vf::G_DS_LIM, seg_limit(ds) as u64);
-    w(vf::G_FS_LIM, seg_limit(fs) as u64);
-    w(vf::G_GS_LIM, seg_limit(gs) as u64);
-    w(vf::G_LDTR_LIM, seg_limit(ldtr) as u64);
-    w(vf::G_TR_LIM, seg_limit(tr) as u64);
-    w(vf::G_GDTR_LIM, gdt_limit as u64);
-    w(vf::G_IDTR_LIM, idt_limit as u64);
-    w(vf::G_ES_AR, seg_ar(es) as u64);
-    w(vf::G_CS_AR, seg_ar(cs) as u64);
-    w(vf::G_SS_AR, seg_ar(ss) as u64);
-    w(vf::G_DS_AR, seg_ar(ds) as u64);
-    w(vf::G_FS_AR, seg_ar(fs) as u64);
-    w(vf::G_GS_AR, seg_ar(gs) as u64);
-    w(vf::G_LDTR_AR, seg_ar(ldtr) as u64);
-    w(vf::G_TR_AR, seg_ar(tr) as u64);
-    w(vf::G_DR7, dr7);
-    w(vf::G_RSP, guest_rsp);
-    w(vf::G_RIP, code_pa);
-    w(vf::G_RFLAGS, 0x2);
-    w(vf::G_INTERRUPTIBILITY, 0);
-    w(vf::G_ACTIVITY, 0);
-    w(vf::G_PENDING_DBG, 0);
-    w(vf::G_SYSENTER_CS, rdmsr(msr_vmx::SYSENTER_CS) & 0xFFFF_FFFF);
-    w(vf::G_SYSENTER_ESP, rdmsr(msr_vmx::SYSENTER_ESP));
-    w(vf::G_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
-    if wfail > 0 {
-        let (ff, ferr) = first_fail.unwrap_or((0, 0));
-        sprint!("vmx: {} of {} VMCS field writes FAILED (first failure: field {:#x} ({}), VM-instruction error {}) — aborting before any launch attempt\r\n",
-                wfail, wcount, ff, vf_name(ff), ferr);
-        // Post-mortem stickiness check, the mirror of the control
-        // read-back: guest RIP was written late in the sequence and
-        // (in every run so far) reported as written. If it still
-        // holds its value, the reporter's successes are real and the
-        // failures named above are true per-field rejections. If it
-        // does not hold, nothing the reporter said can be trusted.
-        match vmread_checked(vf::G_RIP) {
-            Some(read) if read == code_pa => {
-                sprint!("vmx: post-mortem read-back: guest RIP holds {:#x} as written — reported successes are real; the failures above are true rejections of the named fields\r\n",
-                        read);
-            }
-            Some(read) => {
-                sprint!("vmx: post-mortem read-back: guest RIP reads {:#x}, expected {:#x} — reported successes did NOT stick; the reporter itself is suspect\r\n",
-                        read, code_pa);
-            }
-            None => {
-                sprint!("vmx: post-mortem read-back: guest RIP cannot be read back at all — the VMCS state itself is in question\r\n");
+    // Guest state: the shared block from `w`, the segment block
+    // (and GDTR) from `s` — the attempts' only difference.
+    f.w(vf::G_LINK_PTR, u64::MAX);
+    f.w(vf::G_PAT, rdmsr(msr_vmx::PAT));
+    f.w(vf::G_EFER, w.guest_efer);
+    f.w(vf::G_CR0, w.guest_cr0);
+    f.w(vf::G_CR3, w.guest_cr3);
+    f.w(vf::G_CR4, w.guest_cr4);
+    let sel_f = [vf::G_ES_SEL, vf::G_CS_SEL, vf::G_SS_SEL, vf::G_DS_SEL,
+                 vf::G_FS_SEL, vf::G_GS_SEL, vf::G_LDTR_SEL, vf::G_TR_SEL];
+    let base_f = [vf::G_ES_BASE, vf::G_CS_BASE, vf::G_SS_BASE, vf::G_DS_BASE,
+                  vf::G_FS_BASE, vf::G_GS_BASE, vf::G_LDTR_BASE, vf::G_TR_BASE];
+    let lim_f = [vf::G_ES_LIM, vf::G_CS_LIM, vf::G_SS_LIM, vf::G_DS_LIM,
+                 vf::G_FS_LIM, vf::G_GS_LIM, vf::G_LDTR_LIM, vf::G_TR_LIM];
+    let ar_f = [vf::G_ES_AR, vf::G_CS_AR, vf::G_SS_AR, vf::G_DS_AR,
+                vf::G_FS_AR, vf::G_GS_AR, vf::G_LDTR_AR, vf::G_TR_AR];
+    for i in 0..8 {
+        f.w(sel_f[i], s.sel[i] as u64);
+    }
+    for i in 0..8 {
+        f.w(base_f[i], s.base[i]);
+    }
+    f.w(vf::G_GDTR_BASE, s.gdtr_base);
+    f.w(vf::G_IDTR_BASE, s.idtr_base);
+    for i in 0..8 {
+        f.w(lim_f[i], s.lim[i] as u64);
+    }
+    f.w(vf::G_GDTR_LIM, s.gdtr_lim as u64);
+    f.w(vf::G_IDTR_LIM, s.idtr_lim as u64);
+    for i in 0..8 {
+        f.w(ar_f[i], s.ar[i] as u64);
+    }
+    f.w(vf::G_DR7, w.dr7);
+    f.w(vf::G_RSP, w.guest_rsp);
+    f.w(vf::G_RIP, w.code_pa);
+    f.w(vf::G_RFLAGS, 0x2);
+    f.w(vf::G_INTERRUPTIBILITY, 0);
+    f.w(vf::G_ACTIVITY, 0);
+    f.w(vf::G_PENDING_DBG, 0);
+    f.w(vf::G_SYSENTER_CS, rdmsr(msr_vmx::SYSENTER_CS) & 0xFFFF_FFFF);
+    f.w(vf::G_SYSENTER_ESP, rdmsr(msr_vmx::SYSENTER_ESP));
+    f.w(vf::G_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
+}
+
+/// The values a dump actually READ BACK from one attempt's VMCS,
+/// kept so the bisect can diff stored-vs-stored across attempts.
+/// A field maps to Some(value) when its VMREAD succeeded, to
+/// Some(None) when the read was attempted and failed; absence from
+/// the set means the dump never read it.
+struct Stored {
+    fields: [u64; 80],
+    values: [u64; 80],
+    read_ok: [bool; 80],
+    n: usize,
+}
+
+impl Stored {
+    fn new() -> Self {
+        Stored { fields: [0; 80], values: [0; 80], read_ok: [false; 80], n: 0 }
+    }
+    fn put(&mut self, field: u64, v: Option<u64>) {
+        if self.n < 80 {
+            self.fields[self.n] = field;
+            self.values[self.n] = v.unwrap_or(0);
+            self.read_ok[self.n] = v.is_some();
+            self.n += 1;
+        }
+    }
+    fn get(&self, field: u64) -> Option<Option<u64>> {
+        for i in 0..self.n {
+            if self.fields[i] == field {
+                return Some(if self.read_ok[i] { Some(self.values[i]) } else { None });
             }
         }
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        None
     }
-    sprint!("vmx: VMCS filled (host state = this machine now; guest state = its mirror; {} fields written, 0 write failures)\r\n",
-            wcount);
+}
 
-    // ---- first entry ----
+/// One scalar line of the read-back dump: the value AS STORED,
+/// judged against the intended write. Returns 1 when the field
+/// counts as mismatched (stored != intended, or a written field
+/// cannot be read back at all), else 0.
+fn dump_scalar(rec: &WriteRec, stored: &mut Stored, field: u64) -> u32 {
+    let intended = rec.get(field);
+    let got = vmread_checked(field);
+    stored.put(field, got);
+    match (intended, got) {
+        (Some(i), Some(v)) if v == i => {
+            sprint!("vmx: dump: {} stored {:#x} — as written\r\n", vf_name(field), v);
+            0
+        }
+        (Some(i), Some(v)) => {
+            sprint!("vmx: dump: {} stored {:#x} — MISMATCH (intended {:#x})\r\n",
+                    vf_name(field), v, i);
+            1
+        }
+        (Some(i), None) => {
+            sprint!("vmx: dump: {} — VMREAD FAILED (intended {:#x})\r\n",
+                    vf_name(field), i);
+            1
+        }
+        (None, Some(v)) => {
+            sprint!("vmx: dump: {} stored {:#x} (never written)\r\n", vf_name(field), v);
+            0
+        }
+        (None, None) => {
+            sprint!("vmx: dump: {} — VMREAD FAILED (never written)\r\n", vf_name(field));
+            0
+        }
+    }
+}
+
+/// A field the fill never writes, read for the record: the entry
+/// controls load none of these, so their stored values are
+/// whatever VMCLEAR left — evidence either way, never a mismatch.
+fn dump_extra(stored: &mut Stored, field: u64, note: &str) -> u32 {
+    let got = vmread_checked(field);
+    stored.put(field, got);
+    match got {
+        Some(v) => sprint!("vmx: dump: {} stored {:#x} ({})\r\n", vf_name(field), v, note),
+        None => sprint!("vmx: dump: {} — VMREAD FAILED ({})\r\n", vf_name(field), note),
+    }
+    0
+}
+
+/// One segment of the dump: selector, base, limit and the access
+/// rights DECODED on the spot — type, S, DPL, P, AVL, L, D/B, G,
+/// unusable as separate printed bits, so a reader never has to
+/// re-derive the layout the last three convictions turned on.
+/// Returns 1 when any component disagrees with the intended write
+/// or a component cannot be read, else 0.
+fn dump_seg(rec: &WriteRec, stored: &mut Stored, name: &str,
+            sel_f: u64, base_f: u64, lim_f: u64, ar_f: u64) -> u32 {
+    let sel = vmread_checked(sel_f);
+    let base = vmread_checked(base_f);
+    let lim = vmread_checked(lim_f);
+    let ar = vmread_checked(ar_f);
+    stored.put(sel_f, sel);
+    stored.put(base_f, base);
+    stored.put(lim_f, lim);
+    stored.put(ar_f, ar);
+    if let (Some(sel), Some(base), Some(lim), Some(ar)) = (sel, base, lim, ar) {
+        let bad = rec.get(sel_f) != Some(sel) || rec.get(base_f) != Some(base)
+            || rec.get(lim_f) != Some(lim) || rec.get(ar_f) != Some(ar);
+        sprint!("vmx: dump: guest {} sel {:#x} base {:#x} limit {:#x} ar {:#x} [type {} s {} dpl {} p {} avl {} l {} d/b {} g {} unusable {}]{}\r\n",
+                name, sel, base, lim, ar,
+                ar & 0xF, (ar >> 4) & 1, (ar >> 5) & 3, (ar >> 7) & 1,
+                (ar >> 12) & 1, (ar >> 13) & 1, (ar >> 14) & 1,
+                (ar >> 15) & 1, (ar >> 16) & 1,
+                if bad { " — MISMATCH vs intended (next line)" } else { " — as written" });
+        if bad {
+            sprint!("vmx: dump: guest {} intended sel {:#x} base {:#x} limit {:#x} ar {:#x}\r\n",
+                    name,
+                    rec.get(sel_f).unwrap_or(0), rec.get(base_f).unwrap_or(0),
+                    rec.get(lim_f).unwrap_or(0), rec.get(ar_f).unwrap_or(0));
+            1
+        } else {
+            0
+        }
+    } else {
+        sprint!("vmx: dump: guest {} — read-back INCOMPLETE (at least one component VMREAD failed)\r\n",
+                name);
+        1
+    }
+}
+
+/// THE READ-BACK DUMP — this round's reason to exist. The static
+/// §26.3.1 audit convicted three checks on paper and the machine
+/// still refused the entry, so paper is exhausted: after the fill,
+/// VMREAD every guest-state field (and the control block) back and
+/// print the values AS STORED — the only values the entry checks
+/// will ever judge. This is a diagnostic build by design: the dump
+/// is roughly fifty serial lines per attempt, bounded, one line
+/// per field (segments print as one decoded line), and it exists
+/// so the next refusal has to name its field instead of its class.
+/// If any stored value differs from the intended write — above
+/// all if guest CS access rights are not 0xA09B in the VMCS — the
+/// dump headlines it: a second writer or a stale path, not a
+/// guest-state problem at all.
+fn vmx_dump(tag: &str, rec: &WriteRec, stored: &mut Stored) {
+    sprint!("vmx: dump [{}]: state as stored in the VMCS (VMREAD after the fill, before any launch)\r\n",
+            tag);
+    let mut fields = 0u32;
+    let mut mism = 0u32;
+    // The control block: the four control fields, the matching
+    // machinery around them, both CR read shadows and CR masks,
+    // and the MSR-load/store counts — whose nonzero values would
+    // move the refusal into the reason-34 class instead.
+    for fld in [vf::PIN_CTLS, vf::PROC_CTLS, vf::EXIT_CTLS, vf::ENTRY_CTLS,
+                vf::EXC_BITMAP, vf::PF_ERR_MASK, vf::PF_ERR_MATCH,
+                vf::CR3_TGT_COUNT, vf::ENTRY_MSR_LOAD, vf::EXIT_MSR_STORE,
+                vf::EXIT_MSR_LOAD, vf::ENTRY_INT_INFO,
+                vf::CR0_MASK, vf::CR4_MASK, vf::CR0_SHADOW, vf::CR4_SHADOW] {
+        mism += dump_scalar(rec, stored, fld);
+        fields += 1;
+    }
+    mism += dump_extra(stored, vf::PROC_CTLS2,
+                       "never written — secondary controls inactive (primary bit 31 clear)");
+    fields += 1;
+    // The guest scalars, including the non-register trio and the
+    // descriptor-table registers.
+    for fld in [vf::G_LINK_PTR, vf::G_PAT, vf::G_EFER,
+                vf::G_CR0, vf::G_CR3, vf::G_CR4, vf::G_DR7,
+                vf::G_RSP, vf::G_RIP, vf::G_RFLAGS,
+                vf::G_INTERRUPTIBILITY, vf::G_ACTIVITY, vf::G_PENDING_DBG,
+                vf::G_SYSENTER_CS, vf::G_SYSENTER_ESP, vf::G_SYSENTER_EIP,
+                vf::G_GDTR_BASE, vf::G_GDTR_LIM,
+                vf::G_IDTR_BASE, vf::G_IDTR_LIM] {
+        mism += dump_scalar(rec, stored, fld);
+        fields += 1;
+    }
+    mism += dump_extra(stored, vf::G_DEBUGCTL,
+                       "never written — entry does not load it (entry-controls bit 2 clear)");
+    mism += dump_extra(stored, vf::G_PERF_GLOBAL,
+                       "never written — entry does not load it (entry-controls bit 13 clear)");
+    fields += 2;
+    // The segments, decoded.
+    let names = ["ES", "CS", "SS", "DS", "FS", "GS", "LDTR", "TR"];
+    let sel_f = [vf::G_ES_SEL, vf::G_CS_SEL, vf::G_SS_SEL, vf::G_DS_SEL,
+                 vf::G_FS_SEL, vf::G_GS_SEL, vf::G_LDTR_SEL, vf::G_TR_SEL];
+    let base_f = [vf::G_ES_BASE, vf::G_CS_BASE, vf::G_SS_BASE, vf::G_DS_BASE,
+                  vf::G_FS_BASE, vf::G_GS_BASE, vf::G_LDTR_BASE, vf::G_TR_BASE];
+    let lim_f = [vf::G_ES_LIM, vf::G_CS_LIM, vf::G_SS_LIM, vf::G_DS_LIM,
+                 vf::G_FS_LIM, vf::G_GS_LIM, vf::G_LDTR_LIM, vf::G_TR_LIM];
+    let ar_f = [vf::G_ES_AR, vf::G_CS_AR, vf::G_SS_AR, vf::G_DS_AR,
+                vf::G_FS_AR, vf::G_GS_AR, vf::G_LDTR_AR, vf::G_TR_AR];
+    for i in 0..8 {
+        mism += dump_seg(rec, stored, names[i], sel_f[i], base_f[i], lim_f[i], ar_f[i]);
+        fields += 1;
+    }
+    // The CS headline, judged against the canonical value itself
+    // and not only against intent — a wrong intent faithfully
+    // stored would otherwise pass in silence.
+    match stored.get(vf::G_CS_AR) {
+        Some(Some(v)) if v == 0xA09B => {}
+        Some(Some(v)) => {
+            sprint!("vmx: dump: HEADLINE — guest CS access rights as stored are {:#x}, not the canonical 0xa09b this round exists to test\r\n",
+                    v);
+        }
+        Some(None) => {
+            sprint!("vmx: dump: HEADLINE — guest CS access rights cannot be read back at all\r\n");
+        }
+        None => {
+            sprint!("vmx: dump: HEADLINE — guest CS access rights are missing from the read-back set\r\n");
+        }
+    }
+    sprint!("vmx: dump [{}]: {} fields read back, {} mismatched against the intended writes\r\n",
+            tag, fields, mism);
+    if mism > 0 {
+        sprint!("vmx: dump: HEADLINE — {} stored value(s) differ from the values written; the MISMATCH lines above are the evidence (a second writer or a stale path). The launch below still runs, but its verdict cannot be read until this is explained\r\n",
+                mism);
+    }
+}
+
+/// The stored-vs-stored diff between the two attempts' dumps, over
+/// the guest fields only (the control block is one shared world by
+/// construction). One compact line per differing field; when
+/// nothing differs, the line says so — that negative is what
+/// points the next round at the shared block.
+fn vmx_bisect_diff(mirror: &Stored, canon: &Stored) {
+    const GUEST_ALL: [u64; 54] = [
+        vf::G_LINK_PTR, vf::G_PAT, vf::G_EFER, vf::G_DEBUGCTL, vf::G_PERF_GLOBAL,
+        vf::G_CR0, vf::G_CR3, vf::G_CR4, vf::G_DR7, vf::G_RSP, vf::G_RIP,
+        vf::G_RFLAGS, vf::G_INTERRUPTIBILITY, vf::G_ACTIVITY, vf::G_PENDING_DBG,
+        vf::G_SYSENTER_CS, vf::G_SYSENTER_ESP, vf::G_SYSENTER_EIP,
+        vf::G_GDTR_BASE, vf::G_GDTR_LIM, vf::G_IDTR_BASE, vf::G_IDTR_LIM,
+        vf::G_ES_SEL, vf::G_ES_BASE, vf::G_ES_LIM, vf::G_ES_AR,
+        vf::G_CS_SEL, vf::G_CS_BASE, vf::G_CS_LIM, vf::G_CS_AR,
+        vf::G_SS_SEL, vf::G_SS_BASE, vf::G_SS_LIM, vf::G_SS_AR,
+        vf::G_DS_SEL, vf::G_DS_BASE, vf::G_DS_LIM, vf::G_DS_AR,
+        vf::G_FS_SEL, vf::G_FS_BASE, vf::G_FS_LIM, vf::G_FS_AR,
+        vf::G_GS_SEL, vf::G_GS_BASE, vf::G_GS_LIM, vf::G_GS_AR,
+        vf::G_LDTR_SEL, vf::G_LDTR_BASE, vf::G_LDTR_LIM, vf::G_LDTR_AR,
+        vf::G_TR_SEL, vf::G_TR_BASE, vf::G_TR_LIM, vf::G_TR_AR,
+    ];
+    let mut n = 0u32;
+    for fld in GUEST_ALL {
+        if let (Some(Some(a)), Some(Some(b))) = (mirror.get(fld), canon.get(fld)) {
+            if a != b {
+                n += 1;
+                sprint!("vmx: bisect diff: {} — mirror {:#x} vs canonical {:#x}\r\n",
+                        vf_name(fld), a, b);
+            }
+        }
+    }
+    if n == 0 {
+        sprint!("vmx: bisect diff: no guest field differs between the two stored states — if both entries are refused, the refusal lives in the block the attempts share (controls, CRs, EFER, non-register state)\r\n");
+    } else {
+        sprint!("vmx: bisect diff: {} guest field(s) differ between the stored mirror and canonical states (lines above)\r\n",
+                n);
+    }
+}
+
+/// An Option<u64> that prints as its hex value, or as the plain
+/// fact of the failed read — for the exit-record fields, where the
+/// read failing is itself a datum.
+struct OptHex(Option<u64>);
+
+impl core::fmt::Display for OptHex {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        match self.0 {
+            Some(v) => write!(f, "{:#x}", v),
+            None => write!(f, "<VMREAD FAILED>"),
+        }
+    }
+}
+
+/// Exit forensics for a failed entry: the VM-exit qualification
+/// and the VM-exit interruption information, read back while the
+/// exit record still exists (BEFORE any teardown — VMCLEAR would
+/// destroy it). KVM may carry entry-failure detail in these
+/// fields; if they are zero, the log says zero — evidence either
+/// way, never filled in by theory.
+fn vmx_entry_forensics(tag: &str) {
+    let q = vmread_checked(vf::EXIT_QUAL);
+    let ii = vmread_checked(vf::EXIT_INT_INFO);
+    sprint!("vmx: entry forensics ({}): exit qualification {}, exit interruption-information {} (read back after the failed entry)\r\n",
+            tag, OptHex(q), OptHex(ii));
+}
+
+/// The outcome of one launch sequence. Refused33 is kept distinct
+/// from every other stop because it — and only it — arms the
+/// canonical bisect in the caller.
+enum Birth {
+    Born,
+    Refused33,
+    Stopped,
+}
+
+/// The birth sequence for one attempt: VMLAUNCH the 7-byte guest,
+/// judge the first exit, emulate its CPUID, VMRESUME, and require
+/// the HLT exit. Every path ends in teardown, exactly as the
+/// single-attempt flow always has; the caller learns the outcome
+/// from the return value. `tag` names the attempt in the forensics
+/// line; `canonical` prefixes the attempt's own lines with
+/// "bisect " (the mirror's lines stay byte-identical to the runs
+/// that produced runs 1–5).
+fn vmx_birth(tag: &str, canonical: bool, w: &VmxWorld, vmcs_pa: u64) -> Birth {
     const RAX_SENTINEL: u64 = 0x5EED_5EED_5EED_5EED;
+    let p = if canonical { "bisect " } else { "" };
     let mut regs = VmxRegs { rax: RAX_SENTINEL, ..Default::default() };
-    sprint!("vmx: VMLAUNCH #1 — guest enters at {:#x} (the same 7-byte program as the SVM guest)\r\n", code_pa);
+    sprint!("vmx: {}VMLAUNCH #1 — guest enters at {:#x} (the same 7-byte program as the SVM guest)\r\n",
+            p, w.code_pa);
     unsafe { vmx_launch(&mut regs) };
     if regs.flag_cf != 0 {
         let err = vmread_checked(vf::INSTR_ERROR).unwrap_or(0);
-        sprint!("vmx: VMLAUNCH FAILED — VMfailValid, VMCS instruction error {} (read back, not guessed); no guest ran\r\n", err);
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}VMLAUNCH FAILED — VMfailValid, VMCS instruction error {} (read back, not guessed); no guest ran\r\n",
+                p, err);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Stopped;
     }
     if regs.flag_zf != 0 {
-        sprint!("vmx: VMLAUNCH FAILED — VMfailInvalid (no current VMCS or VMCS misconfigured); no guest ran\r\n");
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}VMLAUNCH FAILED — VMfailInvalid (no current VMCS or VMCS misconfigured); no guest ran\r\n",
+                p);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Stopped;
     }
     let reason = vmread_checked(vf::EXIT_REASON).unwrap_or(0) & 0xFFFF;
     let guest_rip = vmread_checked(vf::G_RIP).unwrap_or(0);
-    sprint!("vmx: exit #1 reason {} (cpuid=10, hlt=12) guest rip {:#x} guest rax {:#x}\r\n",
-            reason, guest_rip, regs.rax);
-    if reason == 0 && guest_rip == code_pa && regs.rax == RAX_SENTINEL {
+    sprint!("vmx: {}exit #1 reason {} (cpuid=10, hlt=12) guest rip {:#x} guest rax {:#x}\r\n",
+            p, reason, guest_rip, regs.rax);
+    if reason == 0 && guest_rip == w.code_pa && regs.rax == RAX_SENTINEL {
         // The launch "returned" with the VMCS's exit fields at their
         // initial values and the guest's first instruction (XOR
         // EAX,EAX) demonstrably unexecuted: RAX still holds our
         // sentinel. That is not a birth; it is an environment whose
         // entry path does not enter. Say so plainly, as with SVM.
-        sprint!("vmx: guest birth NOT CLAIMED here — VMLAUNCH returned without the guest executing (exit reason 0, guest RIP and RAX untouched); entry in this environment did not occur; the machinery awaits Intel hardware or a KVM host\r\n");
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}guest birth NOT CLAIMED here — VMLAUNCH returned without the guest executing (exit reason 0, guest RIP and RAX untouched); entry in this environment did not occur; the machinery awaits Intel hardware or a KVM host\r\n",
+                p);
+        vmx_entry_forensics(tag);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Stopped;
     }
     if reason != VMX_EXIT_REASON_CPUID {
-        sprint!("vmx: guest birth FAILED at first exit (reason {})\r\n", reason);
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}guest birth FAILED at first exit (reason {})\r\n", p, reason);
+        vmx_entry_forensics(tag);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return if reason == 33 { Birth::Refused33 } else { Birth::Stopped };
     }
 
     // Emulate CPUID leaf 0 the way an Intel part answers it:
@@ -1846,29 +2397,103 @@ fn vmx_first_guest() {
     regs.rdx = 0x4965_6E69; // "ineI"
     regs.rcx = 0x6C65_746E; // "ntel"
     if !vmwrite_checked(vf::G_RIP, guest_rip + 2) {
-        sprint!("vmx: could not advance guest RIP past CPUID — birth incomplete\r\n");
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}could not advance guest RIP past CPUID — birth incomplete\r\n", p);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Stopped;
     }
-    sprint!("vmx: cpuid emulated (leaf 0 -> GenuineIntel), VMRESUME #2\r\n");
+    sprint!("vmx: {}cpuid emulated (leaf 0 -> GenuineIntel), VMRESUME #2\r\n", p);
     regs.resume = 1;
     unsafe { vmx_launch(&mut regs) };
     if regs.flag_cf != 0 || regs.flag_zf != 0 {
         let err = vmread_checked(vf::INSTR_ERROR).unwrap_or(0);
-        sprint!("vmx: VMRESUME FAILED (cf {} zf {}, instruction error {}) — birth incomplete\r\n",
-                regs.flag_cf, regs.flag_zf, err);
-        vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
-        return;
+        sprint!("vmx: {}VMRESUME FAILED (cf {} zf {}, instruction error {}) — birth incomplete\r\n",
+                p, regs.flag_cf, regs.flag_zf, err);
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Stopped;
     }
     let reason2 = vmread_checked(vf::EXIT_REASON).unwrap_or(0) & 0xFFFF;
-    sprint!("vmx: exit #2 reason {}\r\n", reason2);
+    sprint!("vmx: {}exit #2 reason {}\r\n", p, reason2);
     if reason2 == VMX_EXIT_REASON_HLT {
+        // The attempt is named on the line immediately before
+        // GUEST BORN — the verdict keys PROVEN on the GUEST BORN
+        // line alone, and reads WHICH state was born off this one.
+        if canonical {
+            sprint!("vmx: born on the canonical bisect state (attempt 2) — the mirror state is still refused; the bisect diff above names the fields where the two stored states differ\r\n");
+        } else {
+            sprint!("vmx: born on the mirror state (attempt 1 — the production path)\r\n");
+        }
         sprint!("vmx: GUEST BORN — ran, took our emulated cpuid (rax={:#x} rbx={:#x}), halted back to ZCore\r\n",
                 regs.rax, regs.rbx);
-    } else {
-        sprint!("vmx: guest birth incomplete — second exit was not HLT\r\n");
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Birth::Born;
     }
-    vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
+    sprint!("vmx: {}guest birth incomplete — second exit was not HLT\r\n", p);
+    vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+    Birth::Stopped
+}
+
+/// One full VMX attempt: fill, judge the writes, dump the stored
+/// state, launch. The mirror attempt passes the mirror's
+/// GuestSegs and no prior dump; the bisect passes the canonical
+/// GuestSegs and the mirror's stored set, and gets the stored-vs-
+/// stored diff printed between its dump and its launch.
+enum Attempt {
+    Born,
+    Refused33,
+    Stopped,
+}
+
+fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, canonical: bool,
+               prior: Option<&Stored>, vmcs_pa: u64, stored: &mut Stored) -> Attempt {
+    let p = if canonical { "bisect " } else { "" };
+    let mut f = Fill::new();
+    vmx_fill(&mut f, w, s);
+    if f.wfail > 0 {
+        let (ff, ferr) = f.first_fail.unwrap_or((0, 0));
+        sprint!("vmx: {}{} of {} VMCS field writes FAILED (first failure: field {:#x} ({}), VM-instruction error {}) — aborting before any launch attempt\r\n",
+                p, f.wfail, f.wcount, ff, vf_name(ff), ferr);
+        // Post-mortem stickiness check, the mirror of the control
+        // read-back: guest RIP was written late in the sequence and
+        // (in every run so far) reported as written. If it still
+        // holds its value, the reporter's successes are real and the
+        // failures named above are true per-field rejections. If it
+        // does not hold, nothing the reporter said can be trusted.
+        match vmread_checked(vf::G_RIP) {
+            Some(read) if read == w.code_pa => {
+                sprint!("vmx: post-mortem read-back: guest RIP holds {:#x} as written — reported successes are real; the failures above are true rejections of the named fields\r\n",
+                        read);
+            }
+            Some(read) => {
+                sprint!("vmx: post-mortem read-back: guest RIP reads {:#x}, expected {:#x} — reported successes did NOT stick; the reporter itself is suspect\r\n",
+                        read, w.code_pa);
+            }
+            None => {
+                sprint!("vmx: post-mortem read-back: guest RIP cannot be read back at all — the VMCS state itself is in question\r\n");
+            }
+        }
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return Attempt::Stopped;
+    }
+    if canonical {
+        sprint!("vmx: VMCS filled (bisect: host state = this machine now; guest state = canonical hand-built constants; {} fields written, 0 write failures)\r\n",
+                f.wcount);
+    } else {
+        sprint!("vmx: VMCS filled (host state = this machine now; guest state = its mirror; {} fields written, 0 write failures)\r\n",
+                f.wcount);
+    }
+    vmx_dump(if canonical { "canonical bisect" } else { "mirror" }, &f.rec, stored);
+    if canonical {
+        if let Some(prior) = prior {
+            vmx_bisect_diff(prior, stored);
+        }
+        sprint!("vmx: bisect: canonical state\r\n");
+    }
+    match vmx_birth(if canonical { "canonical bisect" } else { "mirror" },
+                    canonical, w, vmcs_pa) {
+        Birth::Born => Attempt::Born,
+        Birth::Refused33 => Attempt::Refused33,
+        Birth::Stopped => Attempt::Stopped,
+    }
 }
 
 // ---------------------------------------------------------------- entry
