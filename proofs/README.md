@@ -101,3 +101,32 @@ the existence of code alone.
   0x80E, correct in its own group. The next run is the witness
   that decides whether all 87 writes land and the first launch
   attempt is reached.
+- `vm-serial-2026-10-29-run4.log` — that run (same harness, same
+  machine, the host-TR-fixed build). **All 87 field writes land**,
+  the control read-back is exact, VMLAUNCH is attempted — and the
+  first exit is **reason 33** (VM-entry failure due to invalid
+  guest state), with guest RIP still at the entry RIP 0x205f70
+  and guest RAX still holding the 0x5eed5eed5eed5eed sentinel:
+  zero guest instructions executed. The entry consistency checks
+  (SDM §26.3.1) refused the guest state itself, and the static
+  audit convicted the segment access-rights assembly in
+  `seg_ar`: it emitted the **SVM VMCB attribute layout** (access
+  byte + flags nibble at bits 11:8) into VMCS access-rights
+  fields, whose layout is access byte at 7:0, **bits 11:8
+  reserved — §26.3.1.2 requires them all 0 for CS and for every
+  usable segment** — and the flags at 15:12 (AVL/L/D/B/G). As
+  written, all six usable segments carried nonzero reserved bits
+  (CS 0xA, the data segments 0xC), CS and the data segments had
+  G = 0 against a 0xFFFF_FFFF limit (§26.3.1.2 requires G = 1
+  when limit bits 31:20 are set), and the CS had L = 0 for a
+  guest entered as IA-32e mode. TR (0x8B) and the unusable LDTR
+  (0x10000) were unaffected — their flags nibbles are 0, so the
+  mis-assembly was a no-op for them. Fixed in `seg_ar` (access
+  byte from LAR bits 15:8, flags nibble from LAR bits 23:20 into
+  bits 15:12, LAR's limit nibble dropped — the VMCS format does
+  not carry it): the host-mirror values now assemble to CS
+  0xA09B and data 0xC093. The rest of the §26.3.1 checklist was
+  audited field by field against this log's values and cleared
+  (see the stage report). Guest birth still NOT proven; the next
+  run — the first with a guest state that passes the audit
+  end-to-end — is the witness.

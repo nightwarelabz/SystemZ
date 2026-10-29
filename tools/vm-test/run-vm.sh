@@ -280,7 +280,24 @@ elif grep -q 'vmx: guest birth NOT CLAIMED' "$LOG"; then
 elif [ -n "$(line 'VMCS field writes FAILED')" ]; then
   BIRTH="NOT proven"; BIRTH_WHY="VMCS setup was rejected before any launch: $(line 'VMCS field writes FAILED') — every failing field is named in the log above that line, with the first failure's VM-instruction error; file the log, do not guess."
 elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
-  BIRTH="NOT proven"; BIRTH_WHY="first VMX exit was wrong: $(line 'vmx: guest birth FAILED')"
+  BIRTH="NOT proven"
+  # Name the exit reason instead of calling it "wrong": the reason
+  # IS the diagnosis class. 33/34 are VM-entry failures — the entry
+  # was refused before any guest instruction executed (guest state
+  # vs. the MSR-load area). 10 (CPUID) is the birth path itself,
+  # reached but not completed; 12 (HLT) means the guest ran but
+  # halted before its CPUID. Neither upgrades anything: PROVEN is
+  # still judged only by the GUEST BORN grep above.
+  EXIT1_LINE="$(line 'vmx: exit #1 reason')"
+  REASON_N="$(printf '%s' "$EXIT1_LINE" | sed -n 's/.*reason \([0-9][0-9]*\).*/\1/p')"
+  case "$REASON_N" in
+    33) REASON_NAME="VM-entry failure due to invalid guest state — the guest-state consistency checks (SDM SS26.3.1) refused the state ZCore loaded; zero guest instructions executed" ;;
+    34) REASON_NAME="VM-entry failure due to MSR loading — the VM-entry MSR-load area was refused" ;;
+    10) REASON_NAME="CPUID exit — the birth path, but the run did not complete it; see the log" ;;
+    12) REASON_NAME="HLT exit — the guest ran but halted before its CPUID; not the birth sequence" ;;
+    *)  REASON_NAME="not classified here — the log line itself is the evidence" ;;
+  esac
+  BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME): $(line 'vmx: guest birth FAILED')"
 elif [ -n "$(line 'vmx: guest birth incomplete')" ]; then
   BIRTH="NOT proven"; BIRTH_WHY="$(line 'vmx: guest birth incomplete')"
 elif [ -n "$(line 'vmx: could not advance')" ]; then

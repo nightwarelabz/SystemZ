@@ -1287,10 +1287,27 @@ fn seg_selectors() -> (u16, u16, u16, u16, u16, u16, u16, u16) {
     (cs, ss, ds, es, fs, gs, tr, ldtr)
 }
 
-/// LAR for `sel`: Some(VMCS-format access rights) or None if the
-/// segment is unusable (null selector or LAR fails). VMCS AR layout:
-/// bits 7:0 = descriptor access byte, 11:8 = G/D-B/L/AVL, bit 16 =
-/// unusable — assembled from LAR's raw result.
+/// VMCS-format access rights for `sel`, assembled from LAR's raw
+/// result; an unusable segment (null selector, or LAR fails) is
+/// the bare unusable bit.
+///
+/// The two layouts are NOT the same shape, and confusing them is
+/// what run 4 convicted (first VMX exit: reason 33, VM-entry
+/// failure due to invalid guest state, guest RIP unmoved):
+///   LAR raw:  bits 15:8 = access byte, 19:16 = limit 19:16,
+///             23:20 = flags nibble (AVL 20, L 21, D/B 22, G 23).
+///   VMCS AR:  bits 7:0 = access byte, 11:8 RESERVED (SDM Vol. 3C
+///             §26.3.1.2: for CS and for every usable segment these
+///             bits must all be 0 — the VMCS format carries no
+///             limit nibble; the limit lives in its own field),
+///             12 = AVL, 13 = L, 14 = D/B, 15 = G, 16 = unusable.
+/// So the access byte shifts down 8 and the flags nibble shifts
+/// down 8 into bits 15:12; LAR's limit nibble is dropped. The old
+/// assembly put the flags nibble at bits 11:8 — which is the SVM
+/// VMCB attribute layout, not this one — so every usable segment
+/// carried nonzero reserved bits, the CS (host value 0xA9B) had
+/// G = 0 against a 0xFFFF_FFFF limit (§26.3.1.2 requires G = 1
+/// there) and L = 0 for a guest entered as IA-32e mode.
 fn seg_ar(sel: u16) -> u32 {
     if sel == 0 {
         return 1 << 16;
@@ -1305,7 +1322,7 @@ fn seg_ar(sel: u16) -> u32 {
     if zf == 0 {
         1 << 16
     } else {
-        ((raw >> 8) & 0xFF) | ((raw >> 12) & 0xF00)
+        ((raw >> 8) & 0xFF) | ((raw >> 8) & 0xF000)
     }
 }
 
@@ -1564,7 +1581,16 @@ fn vmx_first_guest() {
     let proc_ctls = adjust_controls(proc_msr, 1 << 7);
     // Exit: 64-bit host (bit 9), save guest EFER (20), load host EFER (21).
     let exit_ctls = adjust_controls(exit_msr, (1 << 9) | (1 << 20) | (1 << 21));
-    // Entry: IA-32e-mode guest (bit 9), load guest EFER (bit 16).
+    // Entry: IA-32e-mode guest (bit 9). The second desired bit,
+    // bit 16, is "load IA32_BNDCFGS" — NOT "load IA32_EFER"
+    // (bit 15), whatever this comment used to say. In run 4 the
+    // capability mask cleared bit 16 (final value 0x13fb), so
+    // neither MSR was loaded and the guest EFER field went
+    // unchecked (SDM §26.3.1.1 gates its EFER checks on the load
+    // control). The desired expression stays exactly as the runs
+    // have flown it — do not "repair" it to bit 15 against the
+    // current EFER field (which carries LMA = 0): that pairing
+    // would fail entry on the EFER checks instead.
     let entry_ctls = adjust_controls(entry_msr, (1 << 9) | (1 << 16));
     sprint!("vmx: controls from capability MSRs ({}): pin {:#x} proc {:#x} exit {:#x} entry {:#x}\r\n",
             if use_true { "true-controls" } else { "legacy controls" },
@@ -1592,9 +1618,11 @@ fn vmx_first_guest() {
     // name, value attempted. The first failure also captures the
     // VM-instruction error number (VMREAD of field 0x4400) before
     // anything else can overwrite it: that number is the hardware's
-    // own classification of the rejection (12 = write to a
-    // read-only component, 28 = unsupported component, per the
-    // SDM's VM-instruction error table). This instrumentation
+    // own classification of the rejection (12 = VMREAD/VMWRITE
+    // from/to an unsupported VMCS component, 13 = VMWRITE to a
+    // read-only component, per the SDM's VM-instruction error
+    // table — run 3's error 12 for the nonexistent field 0xC0E is
+    // the table agreeing with itself). This instrumentation
     // exists because the first KVM run (2026-10-29) reported only
     // the bare count — "57 VMCS field writes FAILED" — which could
     // not distinguish a bad field, a bad ordering, or a bad state.
