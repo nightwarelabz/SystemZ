@@ -72,3 +72,32 @@ the existence of code alone.
   ModRM.reg at 15/15 VMWRITE/VMREAD sites); the next run on the
   fixed build is the witness that decides whether the setup now
   lands and the first launch is reached.
+- `vm-serial-2026-10-29-run3.log` — that run (same harness, same
+  machine, the operand-fixed build). The instrumentation now
+  reads as designed: the control read-back is exact (pin / proc /
+  exit / entry all read back precisely as written), the
+  post-mortem guest-RIP read-back holds 0x205f80 as written —
+  reported successes are real — and exactly **1 of 87** field
+  writes failed: field 0xC0E, named "host TR selector", value
+  0x48, **VM-instruction error 12** (VMREAD/VMWRITE to an
+  unsupported VMCS component). The abort-before-launch discipline
+  held, teardown was clean, and guest birth is still NOT proven.
+  The conviction: 0xC0E is not a field that exists. SDM Vol. 3C
+  Appendix B, Table B-3 enumerates **seven** 16-bit host-state
+  fields — §24.5 states in words that "there is no field in the
+  host-state area for the LDTR selector" — and the host TR
+  selector is index 6, encoding **0xC0C**. The field table had
+  been built by mirroring the guest selector group at +0x400,
+  which is correct for ES…GS and wrong only for TR: the guest
+  group has eight members (guest LDTR at 0x80C pushes guest TR
+  to 0x80E), the host group seven. Fixed — `H_TR_SEL` is now
+  0x0C0C, and because the constant keys both the write and the
+  `vf_name` entry, one correction repairs both. The whole
+  host-state group (16-bit, 64-bit, 32-bit, natural-width) was
+  then audited encoding-by-encoding against Appendix B (Tables
+  B-3, B-7, B-15 and the 32-bit host table), including the
+  bridge's asm-written host RSP/RIP (0x6C14/0x6C16 — correct);
+  no sibling error was found, and the guest TR selector stays
+  0x80E, correct in its own group. The next run is the witness
+  that decides whether all 87 writes land and the first launch
+  attempt is reached.

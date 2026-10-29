@@ -1059,7 +1059,7 @@ mod vf {
     pub const H_DS_SEL: u64 = 0x0C06;
     pub const H_FS_SEL: u64 = 0x0C08;
     pub const H_GS_SEL: u64 = 0x0C0A;
-    pub const H_TR_SEL: u64 = 0x0C0E;
+    pub const H_TR_SEL: u64 = 0x0C0C;
     // 64-bit guest / host state
     pub const G_LINK_PTR: u64 = 0x2800;
     pub const G_PAT: u64 = 0x2804;
