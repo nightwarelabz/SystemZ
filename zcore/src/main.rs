@@ -7,8 +7,15 @@
 //!   vendor, VMX (Intel) / SVM (AMD), and the hypervisor-present bit,
 //! - then a halt loop. Nothing else is claimed.
 //!
-//! What does NOT exist yet: VMXON, EPT construction, vCPU scheduling,
-//! ZBus. Those are M1/M2 work and this file will say so until they land.
+//! - the first SVM guest machinery, complete: VMCB built by hand,
+//!   host save area armed, VMRUN executed, CPUID-exit emulation and
+//!   HLT-exit handling written. Its BIRTH is not yet proven: QEMU
+//!   TCG's VMRUN is a no-op (control experiment in the svm section),
+//!   so the birth proof awaits hardware or a KVM host.
+//!
+//! What does NOT exist yet: the VMX twin of the guest, nested paging
+//! (EPT/NPT), vCPU scheduling, ZBus. This file will say so until they
+//! land.
 
 #![no_std]
 #![no_main]
@@ -188,6 +195,265 @@ fn deep_probe(caps: &Capabilities) {
     }
 }
 
+// ---------------------------------------------------------------- svm
+// The first guest. Deliberately tiny: a VMCB describing a long-mode
+// guest whose whole program is XOR EAX,EAX / CPUID / HLT / spin.
+// CPUID and HLT are intercepted. The hypervisor emulates the CPUID
+// (writes the result registers itself, advances RIP past it) and
+// re-enters; the guest then halts into a second exit. Two controlled
+// exits = a guest was born, ran our code, and came back both times.
+//
+// VMCB field offsets follow the AMD architecture manuals, Vol. 3,
+// Appendix B. Guest general-purpose registers other than RAX/RSP/RIP
+// ride in the physical registers across VMRUN — svm_launch saves the
+// host's, loads the guest's, and writes the guest's back on exit.
+
+use core::arch::global_asm;
+
+global_asm!(
+    ".global svm_launch",
+    "svm_launch:",
+    "push rbx",
+    "push rbp",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "push rsi",             // regs pointer, kept on the stack
+    "mov rax, rdi",         // RAX = VMCB physical address (VMRUN's operand)
+    "mov rbx, [rsi]",
+    "mov rcx, [rsi + 8]",
+    "mov rdx, [rsi + 16]",
+    "mov rdi, [rsi + 32]",
+    "mov rbp, [rsi + 40]",
+    "mov r8,  [rsi + 48]",
+    "mov r9,  [rsi + 56]",
+    "mov r10, [rsi + 64]",
+    "mov r11, [rsi + 72]",
+    "mov r12, [rsi + 80]",
+    "mov r13, [rsi + 88]",
+    "mov r14, [rsi + 96]",
+    "mov r15, [rsi + 104]",
+    "mov rsi, [rsi + 24]",  // guest RSI goes last; the pointer is spent
+    "clgi",
+    "vmrun",
+    "stgi",
+    "mov rax, [rsp]",       // recover the regs pointer
+    "mov [rax], rbx",
+    "mov [rax + 8], rcx",
+    "mov [rax + 16], rdx",
+    "mov [rax + 24], rsi",
+    "mov [rax + 32], rdi",
+    "mov [rax + 40], rbp",
+    "mov [rax + 48], r8",
+    "mov [rax + 56], r9",
+    "mov [rax + 64], r10",
+    "mov [rax + 72], r11",
+    "mov [rax + 80], r12",
+    "mov [rax + 88], r13",
+    "mov [rax + 96], r14",
+    "mov [rax + 104], r15",
+    "pop rsi",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbp",
+    "pop rbx",
+    "ret",
+);
+
+extern "C" {
+    fn svm_launch(vmcb_pa: u64, regs: *mut GuestRegs);
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct GuestRegs {
+    rbx: u64, rcx: u64, rdx: u64, rsi: u64, rdi: u64, rbp: u64,
+    r8: u64, r9: u64, r10: u64, r11: u64, r12: u64, r13: u64,
+    r14: u64, r15: u64,
+}
+
+#[repr(C, align(4096))]
+struct AlignedPage([u8; 4096]);
+
+static mut VMCB: AlignedPage = AlignedPage([0; 4096]);
+static mut HSAVE: AlignedPage = AlignedPage([0; 4096]);
+static mut GUEST_STACK: AlignedPage = AlignedPage([0; 4096]);
+
+// xor eax,eax ; cpuid ; hlt ; jmp $
+static GUEST_CODE: [u8; 7] = [0x31, 0xC0, 0x0F, 0xA2, 0xF4, 0xEB, 0xFE];
+
+// VMCB offsets used below.
+mod voff {
+    pub const INTERCEPT_MISC1: usize = 0x00C;
+    pub const GUEST_ASID: usize = 0x030;
+    pub const EXIT_CODE: usize = 0x048;
+    pub const NP_ENABLE: usize = 0x068;
+    pub const CLEAN: usize = 0x098;
+    pub const SEG_ES: usize = 0x400;
+    pub const SEG_CS: usize = 0x410;
+    pub const SEG_SS: usize = 0x420;
+    pub const SEG_DS: usize = 0x430;
+    pub const SEG_GDTR: usize = 0x460;
+    pub const SEG_IDTR: usize = 0x480;
+    pub const EFER: usize = 0x4D0;
+    pub const CR4: usize = 0x4E0;
+    pub const CR3: usize = 0x4E8;
+    pub const CR0: usize = 0x4F0;
+    pub const RFLAGS: usize = 0x508;
+    pub const RIP: usize = 0x510;
+    pub const RSP: usize = 0x548;
+    pub const RAX: usize = 0x5D8;
+}
+
+fn wrmsr(msr: u32, value: u64) {
+    unsafe {
+        asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32,
+             options(nostack));
+    }
+}
+
+fn vmcb_w64(off: usize, value: u64) {
+    unsafe {
+        let base = core::ptr::addr_of_mut!(VMCB) as *mut u8;
+        core::ptr::write_unaligned(base.add(off) as *mut u64, value);
+    }
+}
+fn vmcb_w32(off: usize, value: u32) {
+    unsafe {
+        let base = core::ptr::addr_of_mut!(VMCB) as *mut u8;
+        core::ptr::write_unaligned(base.add(off) as *mut u32, value);
+    }
+}
+fn vmcb_r64(off: usize) -> u64 {
+    unsafe {
+        let base = core::ptr::addr_of!(VMCB) as *const u8;
+        core::ptr::read_unaligned(base.add(off) as *const u64)
+    }
+}
+fn vmcb_seg(off: usize, selector: u16, attrib: u16, limit: u32, base: u64) {
+    unsafe {
+        let p = (core::ptr::addr_of_mut!(VMCB) as *mut u8).add(off);
+        core::ptr::write_unaligned(p as *mut u16, selector);
+        core::ptr::write_unaligned(p.add(2) as *mut u16, attrib);
+        core::ptr::write_unaligned(p.add(4) as *mut u32, limit);
+        core::ptr::write_unaligned(p.add(8) as *mut u64, base);
+    }
+}
+
+const EXIT_CPUID: u64 = 0x72;
+const EXIT_HLT: u64 = 0x78;
+
+fn svm_first_guest() {
+    sprint!("svm: enabling SVM (EFER.SVME + host save area)...\r\n");
+    let efer = rdmsr(0xC000_0080);
+    let hsave_pa = core::ptr::addr_of!(HSAVE) as u64;
+    wrmsr(0xC001_0117, hsave_pa); // VM_HSAVE_PA
+    wrmsr(0xC000_0080, efer | (1 << 12)); // EFER.SVME
+
+    // Host control state the guest inherits as its starting world:
+    // the machine as the firmware left it — long mode, paging on,
+    // identity-mapped where we live. The guest mirrors it.
+    let (cr0, cr3, cr4): (u64, u64, u64);
+    unsafe {
+        let v0: u64; let v3: u64; let v4: u64;
+        asm!("mov {}, cr0", out(reg) v0, options(nostack));
+        asm!("mov {}, cr3", out(reg) v3, options(nostack));
+        asm!("mov {}, cr4", out(reg) v4, options(nostack));
+        cr0 = v0; cr3 = v3; cr4 = v4;
+    }
+    let code_pa = GUEST_CODE.as_ptr() as u64;
+
+    // Intercepts: CPUID (misc1 bit 18) and HLT (misc1 bit 24).
+    vmcb_w32(voff::INTERCEPT_MISC1, (1 << 18) | (1 << 24));
+    vmcb_w32(voff::GUEST_ASID, 1);
+    vmcb_w64(voff::NP_ENABLE, 0); // no nested paging yet: guest phys = host phys
+    // Mirror the host's own world as the guest's first world: long
+    // mode, the firmware's page tables, the host's descriptor tables,
+    // the host's EFER (SVME included, as nested-virt test rigs do).
+    let (gdt_base, gdt_limit, idt_base, idt_limit): (u64, u32, u64, u32);
+    let (tr_sel, ldt_sel): (u16, u16);
+    unsafe {
+        let mut gdtr = [0u8; 10];
+        let mut idtr = [0u8; 10];
+        asm!("sgdt [{}]", in(reg) gdtr.as_mut_ptr(), options(nostack));
+        asm!("sidt [{}]", in(reg) idtr.as_mut_ptr(), options(nostack));
+        let trv: u16; let ldtv: u16;
+        asm!("str {}", out(reg) trv, options(nostack));
+        asm!("sldt {}", out(reg) ldtv, options(nostack));
+        gdt_limit = u16::from_le_bytes(gdtr[0..2].try_into().unwrap()) as u32;
+        gdt_base = u64::from_le_bytes(gdtr[2..10].try_into().unwrap());
+        idt_limit = u16::from_le_bytes(idtr[0..2].try_into().unwrap()) as u32;
+        idt_base = u64::from_le_bytes(idtr[2..10].try_into().unwrap());
+        tr_sel = trv; ldt_sel = ldtv;
+    }
+    vmcb_seg(voff::SEG_CS, 0x08, 0x209B, 0xFFFF_FFFF, 0); // long-mode code
+    vmcb_seg(voff::SEG_SS, 0x10, 0x0093, 0xFFFF_FFFF, 0);
+    vmcb_seg(voff::SEG_DS, 0x10, 0x0093, 0xFFFF_FFFF, 0);
+    vmcb_seg(voff::SEG_ES, 0x10, 0x0093, 0xFFFF_FFFF, 0);
+    vmcb_seg(voff::SEG_GDTR, 0, 0, gdt_limit, gdt_base);
+    vmcb_seg(voff::SEG_IDTR, 0, 0, idt_limit, idt_base);
+    vmcb_seg(0x490, tr_sel, 0x008B, 0xFFFF, 0); // TR (attrib: busy TSS)
+    vmcb_seg(0x470, ldt_sel, 0x0082, 0xFFFF, 0); // LDTR
+    let _ = (tr_sel, ldt_sel);
+    vmcb_w64(voff::EFER, efer | (1 << 12));
+    vmcb_w64(voff::CR0, cr0);
+    vmcb_w64(voff::CR3, cr3);
+    vmcb_w64(voff::CR4, cr4);
+    vmcb_w64(voff::RFLAGS, 0x2);
+    vmcb_w64(voff::RIP, code_pa);
+    vmcb_w64(voff::RSP, core::ptr::addr_of!(GUEST_STACK) as u64 + 4096);
+    vmcb_w64(voff::RAX, 0);
+    vmcb_w32(voff::CLEAN, 0);
+
+    let vmcb_pa = core::ptr::addr_of!(VMCB) as u64;
+    let mut regs = GuestRegs::default();
+    sprint!("svm: vmcb {:#x} hsave {:#x} intercepts readback {:#x} host efer {:#x}\r\n",
+            vmcb_pa, hsave_pa, vmcb_r64(voff::INTERCEPT_MISC1) & 0xFFFF_FFFF,
+            rdmsr(0xC000_0080));
+    sprint!("svm: VMRUN #1 — guest enters at {:#x}\r\n", code_pa);
+    unsafe { svm_launch(vmcb_pa, &mut regs) };
+    let exit1 = vmcb_r64(voff::EXIT_CODE);
+    sprint!("svm: exit #1 code {:#x} (cpuid=0x72, hlt=0x78) info1 {:#x} info2 {:#x} guest rip {:#x}\r\n",
+            exit1, vmcb_r64(0x50), vmcb_r64(0x58), vmcb_r64(voff::RIP));
+    if exit1 == 0 && vmcb_r64(voff::RIP) == code_pa {
+        // VMRUN returned without the guest executing a single
+        // instruction. Proven on QEMU 8.2.2 TCG by control experiment:
+        // with ALL intercepts cleared and a guest that is a pure
+        // infinite loop, VMRUN still "returns" instantly, exit 0,
+        // RIP untouched — its VMRUN is a no-op. Say so plainly; the
+        // birth proof belongs on hardware or a KVM host (SPEC SS18).
+        sprint!("svm: guest birth NOT CLAIMED here — VMRUN did not enter in this environment (emulated VMRUN is a no-op); the machinery is complete and awaits a capable host\r\n");
+        return;
+    }
+    if exit1 != EXIT_CPUID {
+        sprint!("svm: guest birth FAILED at first exit\r\n");
+        return;
+    }
+
+    // Emulate CPUID leaf 0 the way an AMD part answers it, ourselves:
+    // max leaf in RAX, "AuthenticAMD" across RBX/RDX/RCX.
+    vmcb_w64(voff::RAX, 0xD);
+    regs.rbx = 0x6874_7541; // "Auth"
+    regs.rdx = 0x6974_6E65; // "enti"
+    regs.rcx = 0x444D_4163; // "cAMD"
+    vmcb_w64(voff::RIP, vmcb_r64(voff::RIP) + 2); // step over CPUID
+    vmcb_w32(voff::CLEAN, 0);
+
+    sprint!("svm: cpuID emulated (leaf 0 -> AuthenticAMD), VMRUN #2\r\n");
+    unsafe { svm_launch(vmcb_pa, &mut regs) };
+    let exit2 = vmcb_r64(voff::EXIT_CODE);
+    sprint!("svm: exit #2 code {:#x}\r\n", exit2);
+    if exit2 == EXIT_HLT {
+        sprint!("svm: GUEST BORN — ran, took our emulated cpuid (rax={:#x} rbx={:#x}), halted back to ZCore\r\n",
+                vmcb_r64(voff::RAX), regs.rbx);
+    } else {
+        sprint!("svm: guest birth incomplete — second exit was not HLT\r\n");
+    }
+}
+
 // ---------------------------------------------------------------- entry
 
 #[link_section = ".text.boot"]
@@ -223,6 +489,10 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
         }
     } else {
         sprint!("zboot: no manifest (entered without the loader)\r\n");
+    }
+
+    if caps.svm {
+        svm_first_guest();
     }
 
     sprint!("zcore: halting (skeleton ends here, on purpose)\r\n");

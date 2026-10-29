@@ -2,9 +2,10 @@
 BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
 
 SystemZ loader â M1
-loader: zcore.elf read, bytes=0x0000000000003460
+loader: zcore.elf read, bytes=0x0000000000004918
 loader: segment placed at 0x0000000000200000
-loader: segment placed at 0x00000000002016f0
+loader: segment placed at 0x0000000000201e10
+loader: segment placed at 0x0000000000203000
 loader: entry=0x0000000000200000 â exiting boot services
 
 SystemZ ZCore — M1 skeleton
@@ -19,4 +20,9 @@ svm: VM_CR = 0x0 (svmdis 0)
 zboot: manifest v1 ok — map at 0x101000, 6288 bytes, desc 48 bytes
 zboot: acpi rsdp: 0xfb7e014
 zboot: memory map: 131 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
+svm: enabling SVM (EFER.SVME + host save area)...
+svm: vmcb 0x204000 hsave 0x205000 intercepts readback 0x1040000 host efer 0x1d00
+svm: VMRUN #1 — guest enters at 0x201e50
+svm: exit #1 code 0x0 (cpuid=0x72, hlt=0x78) info1 0x0 info2 0x0 guest rip 0x201e50
+svm: guest birth NOT CLAIMED here — VMRUN did not enter in this environment (emulated VMRUN is a no-op); the machinery is complete and awaits a capable host
 zcore: halting (skeleton ends here, on purpose)

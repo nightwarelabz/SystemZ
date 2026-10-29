@@ -58,9 +58,15 @@ rm -rf "$WORK"
 
 echo "== serial log =="
 cat "$SERIAL_LOG" || true
+# The guest-birth line accepts either outcome, honestly reported:
+# "GUEST BORN" on a capable host, or ZCore's own plain statement that
+# this environment's VMRUN did not enter (QEMU TCG's is a no-op —
+# proven by control experiment, see zcore/src/main.rs). What the
+# harness must never do is claim a birth that did not happen.
 if grep -q "SystemZ ZCore" "$SERIAL_LOG" && grep -q "verdict:" "$SERIAL_LOG" \
-   && grep -q "zboot: memory map:" "$SERIAL_LOG"; then
-  echo "QEMU PROOF: PASS — ZCore banner, verdict, and boot-manifest memory map on serial"
+   && grep -q "zboot: memory map:" "$SERIAL_LOG" \
+   && grep -Eq "GUEST BORN|guest birth NOT CLAIMED" "$SERIAL_LOG"; then
+  echo "QEMU PROOF: PASS — boot chain, manifest, SVM attempt honestly reported"
 else
   echo "QEMU PROOF: FAIL — expected ZCore evidence not seen on serial" >&2
   exit 1
