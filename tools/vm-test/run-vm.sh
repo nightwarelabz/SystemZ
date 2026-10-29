@@ -270,7 +270,12 @@ BIRTH=""
 SHOW_TAIL=0
 if grep -q 'vmx: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
-  if grep -q 'born on ladder rung' "$LOG"; then
+  if grep -q 'born on ladder-2 rung' "$LOG"; then
+    # Born on a ladder-2 rung: the variable was in the HOST
+    # state or a CONTROL word — the two blocks that had never
+    # varied. The rung line names the departure; quote it whole.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on ladder-2 rung') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on ladder rung' "$LOG"; then
     # Born on a ladder rung: the guest program ran (a birth), and
     # the rung line names the single shared-block variable whose
     # change admitted it. Quote the rung line whole — it carries
@@ -318,6 +323,14 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     # entry, so the refusal lives in the block the two attempts
     # share. Say that, and point at the dumps.
     BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the canonical bisect was also refused: $(line 'vmx: bisect exit #1 reason') — both states refused at entry, so the refusal lives in the block they share (controls, CRs, EFER, non-register state); the read-back dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
+  elif grep -q 'vmx: ladder2' "$LOG"; then
+    # Ladder-2 climbed too — this check must precede the ladder
+    # branch below, because 'vmx: ladder' is a substring of the
+    # ladder-2 lines' prefix family and a ladder-2 log also
+    # contains ladder-1's summary. Host state is dumped in the
+    # log and the control words stand varied or exonerated;
+    # quote ZCore's own closing line for the census.
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the host-state/controls ladder (ladder-2) ran and no rung entered: $(line 'vmx: ladder2: no rung entered') — the per-rung dumps in the log (host state read back for the first time) are the evidence: $(line 'vmx: guest birth FAILED')"
   elif grep -q 'vmx: ladder' "$LOG"; then
     # The shared-block ladder climbed and no rung entered: each
     # rung changed exactly one variable against the refused

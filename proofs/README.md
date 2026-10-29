@@ -186,3 +186,34 @@ the existence of code alone.
   entry controls' load-IA32_EFER bit (SDM bit 15) set
   explicitly, and a guarded probe of the entry controls'
   unnamed bit 12 — stopping at the first rung that enters.
+- `vm-serial-2026-10-29-run7.log` — the ladder run (same harness,
+  same machine, the shared-block ladder build). The ladder
+  climbed exactly as designed and every rung was refused:
+  **R0** (the mirror, unchanged), **R1** (guest IA32_EFER :=
+  the host's live MSR — the dump proves the field as stored
+  became **0xD00**, LMA as the host holds it, and the entry
+  still refused, so the EFER/LMA hypothesis is empirically
+  dead, not merely argued against), **R2** (the guest SYSENTER
+  trio re-sourced from the host's live MSRs, which the log
+  reads on the record as **0/0/0** — the stored zeros are
+  certified at their source, and the refusal is unchanged),
+  **R3** (the entry itself loading IA32_EFER, entry controls
+  0x93FB, on top of R1+R2 — still refused), each with a
+  **47-field read-back dump, 0 mismatched**, exit qualification
+  0 and interruption-information 0 throughout. **R4 did not
+  launch**: entry-controls bit 12 is must-be-1 per the live
+  capability MSR (0xF3FF000011FB, must-be-1 dword 0x11FB), so
+  clearing it is not a legal experiment on this machine. The
+  guest block, the EFER field under both treatments, the
+  SYSENTER zeros, and the entry load bit stand exonerated
+  variable by variable. What seven runs have still never
+  examined: the **host state** — written into every VMCS,
+  never once read back or audited — and the **control words**
+  themselves, byte-identical across all seven runs. The next
+  build dumps the host state with the rest (selectors decoded
+  index/TI/RPL on the line) and varies exactly those two
+  blocks: a second ladder whose rungs depart from the mirror
+  singly — host data selectors nulled, each of the proc /
+  exit / entry control words reduced to its capability floor
+  — plus one combined rung, stopping at the first that
+  enters. Guest birth still NOT proven.

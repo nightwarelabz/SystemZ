@@ -1071,7 +1071,9 @@ mod vf {
     pub const G_PAT: u64 = 0x2804;
     pub const G_EFER: u64 = 0x2806;
     pub const G_PERF_GLOBAL: u64 = 0x2808;
+    pub const H_PAT: u64 = 0x2C00;
     pub const H_EFER: u64 = 0x2C02;
+    pub const H_PERF_GLOBAL: u64 = 0x2C04;
     // 32-bit control
     pub const PIN_CTLS: u64 = 0x4000;
     pub const PROC_CTLS: u64 = 0x4002;
@@ -1183,7 +1185,9 @@ fn vf_name(field: u64) -> &'static str {
         G_PAT => "guest IA32_PAT",
         G_EFER => "guest IA32_EFER",
         G_PERF_GLOBAL => "guest IA32_PERF_GLOBAL_CTRL",
+        H_PAT => "host IA32_PAT",
         H_EFER => "host IA32_EFER",
+        H_PERF_GLOBAL => "host IA32_PERF_GLOBAL_CTRL",
         PIN_CTLS => "pin-based controls",
         PROC_CTLS => "primary processor-based controls",
         PROC_CTLS2 => "secondary processor-based controls",
@@ -1725,6 +1729,142 @@ fn vmx_first_guest() {
     }
     sprint!("vmx: ladder: no rung entered — {} rung(s) launched, {} refused at entry (reason 33); a rung marked NOT APPLICABLE above did not launch. The shared block stands exonerated variable by variable, and the refusal now points beneath ZCore, at how the entry is constructed for a nested guest (KVM's vmcs02 synthesis). The per-rung read-back dumps above are the evidence\r\n",
             launched, refused);
+
+    // ---- ladder-2: the host state and the control words ----
+    // Two blocks have been byte-identical across all seven runs:
+    // the HOST state (written every time, read back for the
+    // first time in this build's dumps) and the four CONTROL
+    // words (computed once from the capability MSRs, never
+    // varied). Ladder-1 walked the guest block; ladder-2 varies
+    // exactly these two, in the same one-boot pattern — but NOT
+    // cumulatively: every rung departs from the refused mirror
+    // ALONE, so a rung's refusal or entry convicts its own
+    // departure and nothing else's. H5 then flies the applicable
+    // departures combined.
+    //
+    // Each rung's departure is computed here, from the live
+    // capability MSRs and the live selectors, as the list of
+    // (field, value) pairs in which it differs from the flown
+    // state. A rung whose list is empty has no variable to
+    // change on this machine — the flown state already sits at
+    // the floor it would test — and is marked NOT APPLICABLE
+    // rather than flown under a second name; a rung whose list
+    // repeats an already-launched rung's is marked DUPLICATE.
+    // On the 800 G1's KVM, two degeneracies are expected by
+    // construction and the code below simply reports which: the
+    // flown processor-based word already IS must-be-1 |
+    // HLT-exiting (that is all the fill ever desired there), and
+    // the entry floor differs from the flown entry word only if
+    // the fossil desired bit 16 survives the capability mask
+    // somewhere, which seven runs say it does not.
+    sprint!("vmx: ladder2: the guest block stands exhausted and the dumps now read the host state back too — what has never varied in seven runs is the HOST state and the CONTROL words. Ladder-2 varies exactly those: single departures from the mirror, nothing cumulative, stopping at the first rung that enters\r\n");
+    fn same_patches(a: &[(u64, u64)], b: &[(u64, u64)]) -> bool {
+        a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x == y)
+    }
+    let proc_floor = adjust_controls(proc_msr, 1 << 7);
+    let exit_floor = adjust_controls(exit_msr, 1 << 9);
+    let entry_floor = adjust_controls(entry_msr, 1 << 9);
+    // H1: the host data selectors, nulled where they are not
+    // already null.
+    let mut dep1: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n1 = 0usize;
+    for (field, cur) in [(vf::H_ES_SEL, world.es), (vf::H_SS_SEL, world.ss),
+                         (vf::H_DS_SEL, world.ds), (vf::H_FS_SEL, world.fs),
+                         (vf::H_GS_SEL, world.gs)] {
+        if cur != 0 {
+            dep1[n1] = (field, 0);
+            n1 += 1;
+        }
+    }
+    // H2/H3/H4: one control word each, reduced to its floor.
+    let mut dep2: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n2 = 0usize;
+    if proc_floor != world.proc_ctls {
+        dep2[0] = (vf::PROC_CTLS, proc_floor as u64);
+        n2 = 1;
+    }
+    let mut dep3: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n3 = 0usize;
+    if exit_floor != world.exit_ctls {
+        dep3[0] = (vf::EXIT_CTLS, exit_floor as u64);
+        n3 = 1;
+    }
+    let mut dep4: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n4 = 0usize;
+    if entry_floor != world.entry_ctls {
+        dep4[0] = (vf::ENTRY_CTLS, entry_floor as u64);
+        n4 = 1;
+    }
+    // H5: the applicable departures combined, in H1..H4 order.
+    let mut dep5: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n5 = 0usize;
+    for src in [&dep1[..n1], &dep2[..n2], &dep3[..n3], &dep4[..n4]] {
+        for &pair in src {
+            dep5[n5] = pair;
+            n5 += 1;
+        }
+    }
+    let deps: [&[(u64, u64)]; 5] = [&dep1[..n1], &dep2[..n2], &dep3[..n3],
+                                   &dep4[..n4], &dep5[..n5]];
+    let mut flown: [&[(u64, u64)]; 5] = [&[]; 5];
+    let mut flown_hr: [u8; 5] = [0; 5];
+    let mut flown_n = 0usize;
+    let mut launched2 = 0u32;
+    let mut refused2 = 0u32;
+    for hrung in 1..=5u8 {
+        let dep = deps[(hrung - 1) as usize];
+        if dep.is_empty() {
+            match hrung {
+                1 => sprint!("vmx: ladder2 H1: NOT APPLICABLE — the host's live data selectors are already null on this machine; there is no selector variable to change\r\n"),
+                2 => sprint!("vmx: ladder2 H2: NOT APPLICABLE — the flown processor-based controls {:#x} already equal the capability floor {:#x} (must-be-1 | HLT-exiting) on this machine; the word has no variable left to change\r\n",
+                             world.proc_ctls, proc_floor),
+                3 => sprint!("vmx: ladder2 H3: NOT APPLICABLE — the flown exit controls {:#x} already equal the capability floor {:#x} (must-be-1 | 64-bit host) on this machine; the EFER save/load pair is must-be-1 here and cannot come off\r\n",
+                             world.exit_ctls, exit_floor),
+                4 => sprint!("vmx: ladder2 H4: NOT APPLICABLE — the flown entry controls {:#x} already equal the capability floor {:#x} (must-be-1 | IA-32e-mode guest) on this machine; the word has no variable left to change\r\n",
+                             world.entry_ctls, entry_floor),
+                _ => sprint!("vmx: ladder2 H5: NOT APPLICABLE — every component departure is individually inapplicable on this machine; the combined state IS the mirror state\r\n"),
+            }
+            continue;
+        }
+        let mut dup_of = 0u8;
+        for (i, prev) in flown.iter().enumerate() {
+            if !prev.is_empty() && same_patches(prev, dep) {
+                dup_of = flown_hr[i];
+                break;
+            }
+        }
+        if dup_of != 0 {
+            sprint!("vmx: ladder2 H{}: DUPLICATE of an earlier rung — this departure computes to the identical patch list as H{} (the other components are already at their floors), whose refusal stands on the record above; not flown twice\r\n",
+                    hrung, dup_of);
+            continue;
+        }
+        match hrung {
+            1 => sprint!("vmx: ladder2 H1: host data selectors (ES/SS/DS/FS/GS) := 0 — null selectors are legal host state for everything but CS/TR\r\n"),
+            2 => sprint!("vmx: ladder2 H2: processor-based controls := the capability floor {:#x} (must-be-1 | HLT-exiting only), from flown {:#x}\r\n",
+                         proc_floor, world.proc_ctls),
+            3 => sprint!("vmx: ladder2 H3: exit controls := the capability floor {:#x} (must-be-1 | 64-bit host only; the EFER save/load pair comes off), from flown {:#x}\r\n",
+                         exit_floor, world.exit_ctls),
+            4 => sprint!("vmx: ladder2 H4: entry controls := the capability floor {:#x} (must-be-1 | IA-32e-mode guest only), from flown {:#x}\r\n",
+                         entry_floor, world.entry_ctls),
+            _ => sprint!("vmx: ladder2 H5: the combined departure — every applicable single departure above, in one state\r\n"),
+        }
+        if !vmx_reenter(adj_cr0, adj_cr4, vmxon_pa, revision, vmcs_pa,
+                        orig_cr0, orig_cr4) {
+            return;
+        }
+        flown[flown_n] = dep;
+        flown_hr[flown_n] = hrung;
+        flown_n += 1;
+        let mut stored_h = Stored::new();
+        launched2 += 1;
+        match vmx_attempt_h(&world, &mirror, hrung, dep, vmcs_pa,
+                            &mut stored_h) {
+            Attempt::Refused33 => { refused2 += 1; }
+            _ => return,
+        }
+    }
+    sprint!("vmx: ladder2: no rung entered — {} rung(s) launched, {} refused at entry (reason 33); rungs marked NOT APPLICABLE or DUPLICATE above did not launch. The host state and the control words now stand varied or exonerated beside everything else; what remains lies beneath the L1-visible VMCS — KVM's vmcs02 synthesis and the hardware entry checks upon it. The dumps above are the complete L1-side evidence\r\n",
+            launched2, refused2);
 }
 
 /// Everything the mirror attempt and every ladder rung share,
@@ -2123,18 +2263,18 @@ fn vmx_fill(f: &mut Fill, w: &VmxWorld, s: &GuestSegs) {
 /// Some(None) when the read was attempted and failed; absence from
 /// the set means the dump never read it.
 struct Stored {
-    fields: [u64; 80],
-    values: [u64; 80],
-    read_ok: [bool; 80],
+    fields: [u64; 112],
+    values: [u64; 112],
+    read_ok: [bool; 112],
     n: usize,
 }
 
 impl Stored {
     fn new() -> Self {
-        Stored { fields: [0; 80], values: [0; 80], read_ok: [false; 80], n: 0 }
+        Stored { fields: [0; 112], values: [0; 112], read_ok: [false; 112], n: 0 }
     }
     fn put(&mut self, field: u64, v: Option<u64>) {
-        if self.n < 80 {
+        if self.n < 112 {
             self.fields[self.n] = field;
             self.values[self.n] = v.unwrap_or(0);
             self.read_ok[self.n] = v.is_some();
@@ -2239,15 +2379,73 @@ fn dump_seg(rec: &WriteRec, stored: &mut Stored, name: &str,
     }
 }
 
+/// One host selector of the dump: the value AS STORED, judged
+/// against the intended write, with the selector DECODED on the
+/// spot — index, TI, RPL as separate printed fields. The decode
+/// exists because the host selector checks (SDM §26.3 and KVM's
+/// nested_vmx_check_host_state alike) are stated in exactly
+/// these terms: TI must be 0, RPL must be 0, and CS/TR (and SS,
+/// off the 64-bit-host path) must not be null. A reader of the
+/// log should never have to re-derive them from the hex.
+fn dump_host_sel(rec: &WriteRec, stored: &mut Stored, name: &str,
+                 sel_f: u64) -> u32 {
+    let got = vmread_checked(sel_f);
+    stored.put(sel_f, got);
+    match (rec.get(sel_f), got) {
+        (Some(i), Some(v)) => {
+            let bad = v != i;
+            sprint!("vmx: dump: host {} selector stored {:#x} [index {} ti {} rpl {}]{}\r\n",
+                    name, v, v >> 3, (v >> 2) & 1, v & 3,
+                    if bad { " — MISMATCH vs intended (next line)" } else { " — as written" });
+            if bad {
+                sprint!("vmx: dump: host {} selector intended {:#x}\r\n", name, i);
+                1
+            } else {
+                0
+            }
+        }
+        (Some(i), None) => {
+            sprint!("vmx: dump: host {} selector — VMREAD FAILED (intended {:#x})\r\n",
+                    name, i);
+            1
+        }
+        (None, Some(v)) => {
+            sprint!("vmx: dump: host {} selector stored {:#x} [index {} ti {} rpl {}] (never written)\r\n",
+                    name, v, v >> 3, (v >> 2) & 1, v & 3);
+            0
+        }
+        (None, None) => {
+            sprint!("vmx: dump: host {} selector — VMREAD FAILED (never written)\r\n",
+                    name);
+            0
+        }
+    }
+}
+
 /// THE READ-BACK DUMP — this round's reason to exist. The static
 /// §26.3.1 audit convicted three checks on paper and the machine
 /// still refused the entry, so paper is exhausted: after the fill,
 /// VMREAD every guest-state field (and the control block) back and
 /// print the values AS STORED — the only values the entry checks
 /// will ever judge. This is a diagnostic build by design: the dump
-/// is roughly fifty serial lines per attempt, bounded, one line
-/// per field (segments print as one decoded line), and it exists
-/// so the next refusal has to name its field instead of its class.
+/// is bounded, one line per field (segments print as one decoded
+/// line), and it exists so the next refusal has to name its field
+/// instead of its class.
+///
+/// The host-state block joined the dump in the host-state round.
+/// For seven runs the dump covered the controls and the guest
+/// state only, while the VMCS's other half — the state the
+/// processor loads on every VM exit, and the half KVM validates
+/// in software for a nested guest (nested_vmx_check_host_state) —
+/// was written and never once read back. It is read back now:
+/// CR0/CR3/CR4, the SYSENTER trio, EFER, the MSR bases, the
+/// descriptor-table and TR bases, and all seven selectors with
+/// their index/TI/RPL decoded on the line. HOST_RSP and HOST_RIP
+/// are read here too, with their timing stated honestly: the
+/// launch bridge writes them inside vmx_launch, AFTER this dump,
+/// so the values stored at dump time are VMCLEAR's leftovers —
+/// the values a launch actually flew are read back in the entry
+/// forensics, after a failed entry, while they still stand.
 /// If any stored value differs from the intended write — above
 /// all if guest CS access rights are not 0xA09B in the VMCS — the
 /// dump headlines it: a second writer or a stale path, not a
@@ -2340,6 +2538,37 @@ fn vmx_dump(tag: &str, rec: &WriteRec, stored: &mut Stored) {
             sprint!("vmx: dump: HEADLINE — guest CS access rights are missing from the read-back set\r\n");
         }
     }
+    // The host state — the VMCS's other half, dumped for the
+    // first time in the host-state round. The fill writes every
+    // field below except PAT, PERF_GLOBAL_CTRL, RSP and RIP;
+    // those four are read for the record with their gates and
+    // timing stated on their lines.
+    for fld in [vf::H_CR0, vf::H_CR3, vf::H_CR4,
+                vf::H_SYSENTER_CS, vf::H_SYSENTER_ESP, vf::H_SYSENTER_EIP,
+                vf::H_EFER, vf::H_FS_BASE, vf::H_GS_BASE,
+                vf::H_TR_BASE, vf::H_GDTR_BASE, vf::H_IDTR_BASE] {
+        mism += dump_scalar(rec, stored, fld);
+        fields += 1;
+    }
+    let hnames = ["ES", "CS", "SS", "DS", "FS", "GS", "TR"];
+    let hsel_f = [vf::H_ES_SEL, vf::H_CS_SEL, vf::H_SS_SEL, vf::H_DS_SEL,
+                  vf::H_FS_SEL, vf::H_GS_SEL, vf::H_TR_SEL];
+    for i in 0..7 {
+        mism += dump_host_sel(rec, stored, hnames[i], hsel_f[i]);
+        fields += 1;
+    }
+    mism += dump_extra(stored, vf::H_PAT,
+                       "never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record");
+    mism += dump_extra(stored, vf::H_PERF_GLOBAL,
+                       "never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record");
+    // HOST_RSP (0x6C14) / HOST_RIP (0x6C16): encodings owned by
+    // the launch bridge (see the vf module header) — read here
+    // for the record, written by the bridge later.
+    mism += dump_extra(stored, 0x6C14,
+                       "bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics");
+    mism += dump_extra(stored, 0x6C16,
+                       "bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics");
+    fields += 4;
     sprint!("vmx: dump [{}]: {} fields read back, {} mismatched against the intended writes\r\n",
             tag, fields, mism);
     if mism > 0 {
@@ -2380,6 +2609,18 @@ fn vmx_entry_forensics(tag: &str) {
     let ii = vmread_checked(vf::EXIT_INT_INFO);
     sprint!("vmx: entry forensics ({}): exit qualification {}, exit interruption-information {} (read back after the failed entry)\r\n",
             tag, OptHex(q), OptHex(ii));
+    // HOST_RSP (0x6C14) / HOST_RIP (0x6C16) as the launch bridge
+    // left them. The pre-launch dump can only show VMCLEAR's
+    // leftovers for these two — the bridge writes them inside
+    // vmx_launch — but a failed entry does not consume them, so
+    // here they are the values the launch actually flew, read
+    // back while they still stand. KVM's host-state validation
+    // judges the host RIP's canonicality (against host CR4.LA57);
+    // this line puts the judged value on the record.
+    let hrsp = vmread_checked(0x6C14);
+    let hrip = vmread_checked(0x6C16);
+    sprint!("vmx: entry forensics ({}): host RSP {}, host RIP {} (bridge-written values as they stood at the launch attempt)\r\n",
+            tag, OptHex(hrsp), OptHex(hrip));
 }
 
 /// The outcome of one launch sequence. Refused33 is kept distinct
@@ -2398,9 +2639,12 @@ enum Birth {
 /// from the return value. `tag` names the attempt in the forensics
 /// line; `p` prefixes the attempt's own lines ("ladder " for the
 /// rungs; the mirror passes "" and its lines stay byte-identical
-/// to the runs that produced runs 1–6). `rung` is 0 for the
-/// mirror and 1-4 for the ladder rungs, and names the born line.
-fn vmx_birth(tag: &str, p: &str, rung: u8, w: &VmxWorld, vmcs_pa: u64) -> Birth {
+/// to the runs that produced runs 1–6). `kind` says which
+/// sequence the attempt belongs to (0 = the mirror, 1 = the
+/// shared-block ladder, 2 = the host-state/controls ladder) and
+/// `rung` is the attempt's number within it (0 for the mirror);
+/// together they name the born line.
+fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64) -> Birth {
     const RAX_SENTINEL: u64 = 0x5EED_5EED_5EED_5EED;
     let mut regs = VmxRegs { rax: RAX_SENTINEL, ..Default::default() };
     sprint!("vmx: {}VMLAUNCH #1 — guest enters at {:#x} (the same 7-byte program as the SVM guest)\r\n",
@@ -2469,7 +2713,20 @@ fn vmx_birth(tag: &str, p: &str, rung: u8, w: &VmxWorld, vmcs_pa: u64) -> Birth 
         // The attempt is named on the line immediately before
         // GUEST BORN — the verdict keys PROVEN on the GUEST BORN
         // line alone, and reads WHICH state was born off this one.
-        if rung > 0 {
+        if kind == 2 {
+            // Ladder-2's rungs depart from the mirror ALONE (no
+            // accumulation): the delta names the single departure
+            // this attempt flew, and the rung's patch lines above
+            // carry the exact fields and bits.
+            let delta = match rung {
+                1 => "the host data selectors (ES/SS/DS/FS/GS) null, where every refused state carried the host's live data selectors",
+                2 => "the processor-based controls reduced to their capability floor (must-be-1 | HLT-exiting only)",
+                3 => "the exit controls reduced to their capability floor (must-be-1 | 64-bit host only; the EFER save/load pair off)",
+                4 => "the entry controls reduced to their capability floor (must-be-1 | IA-32e-mode guest only)",
+                _ => "the combined floor — null host data selectors plus every varied control word at its capability floor, a single state no earlier rung flew",
+            };
+            sprint!("vmx: born on ladder-2 rung H{} — {}\r\n", rung, delta);
+        } else if rung > 0 {
             // The rung is named with its delta: the delta is the
             // conviction — it is the ONLY variable in which this
             // attempt differed from the refused control rung.
@@ -2545,6 +2802,43 @@ fn ladder_entry_ctls(w: &VmxWorld, rung: u8) -> u32 {
 ///   R4: + entry controls: bit 12 cleared (the unnamed,
 ///       capability-forced bit; caller verified it is not
 ///       must-be-1 on this machine).
+/// The write-failure abort every attempt path shares: if the
+/// fill recorded any rejected write, name the census and the
+/// first failure, run the post-mortem stickiness check (guest
+/// RIP — written late in the sequence — is the reporter's
+/// character witness), tear down, and report the abort. Returns
+/// true when the attempt must stop. The printed lines are the
+/// mirror attempt's historical lines, shared verbatim.
+fn vmx_wfail_abort(p: &str, f: &Fill, w: &VmxWorld, vmcs_pa: u64) -> bool {
+    if f.wfail == 0 {
+        return false;
+    }
+    let (ff, ferr) = f.first_fail.unwrap_or((0, 0));
+    sprint!("vmx: {}{} of {} VMCS field writes FAILED (first failure: field {:#x} ({}), VM-instruction error {}) — aborting before any launch attempt\r\n",
+            p, f.wfail, f.wcount, ff, vf_name(ff), ferr);
+    // Post-mortem stickiness check, the mirror of the control
+    // read-back: guest RIP was written late in the sequence and
+    // (in every run so far) reported as written. If it still
+    // holds its value, the reporter's successes are real and the
+    // failures named above are true per-field rejections. If it
+    // does not hold, nothing the reporter said can be trusted.
+    match vmread_checked(vf::G_RIP) {
+        Some(read) if read == w.code_pa => {
+            sprint!("vmx: post-mortem read-back: guest RIP holds {:#x} as written — reported successes are real; the failures above are true rejections of the named fields\r\n",
+                    read);
+        }
+        Some(read) => {
+            sprint!("vmx: post-mortem read-back: guest RIP reads {:#x}, expected {:#x} — reported successes did NOT stick; the reporter itself is suspect\r\n",
+                    read, w.code_pa);
+        }
+        None => {
+            sprint!("vmx: post-mortem read-back: guest RIP cannot be read back at all — the VMCS state itself is in question\r\n");
+        }
+    }
+    vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+    true
+}
+
 enum Attempt {
     Born,
     Refused33,
@@ -2556,30 +2850,7 @@ fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, rung: u8,
     let p = if rung == 0 { "" } else { "ladder " };
     let mut f = Fill::new();
     vmx_fill(&mut f, w, s);
-    if f.wfail > 0 {
-        let (ff, ferr) = f.first_fail.unwrap_or((0, 0));
-        sprint!("vmx: {}{} of {} VMCS field writes FAILED (first failure: field {:#x} ({}), VM-instruction error {}) — aborting before any launch attempt\r\n",
-                p, f.wfail, f.wcount, ff, vf_name(ff), ferr);
-        // Post-mortem stickiness check, the mirror of the control
-        // read-back: guest RIP was written late in the sequence and
-        // (in every run so far) reported as written. If it still
-        // holds its value, the reporter's successes are real and the
-        // failures named above are true per-field rejections. If it
-        // does not hold, nothing the reporter said can be trusted.
-        match vmread_checked(vf::G_RIP) {
-            Some(read) if read == w.code_pa => {
-                sprint!("vmx: post-mortem read-back: guest RIP holds {:#x} as written — reported successes are real; the failures above are true rejections of the named fields\r\n",
-                        read);
-            }
-            Some(read) => {
-                sprint!("vmx: post-mortem read-back: guest RIP reads {:#x}, expected {:#x} — reported successes did NOT stick; the reporter itself is suspect\r\n",
-                        read, w.code_pa);
-            }
-            None => {
-                sprint!("vmx: post-mortem read-back: guest RIP cannot be read back at all — the VMCS state itself is in question\r\n");
-            }
-        }
-        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+    if vmx_wfail_abort(p, &f, w, vmcs_pa) {
         return Attempt::Stopped;
     }
     if rung == 0 {
@@ -2637,7 +2908,72 @@ fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, rung: u8,
         _ => "ladder R4",
     };
     vmx_dump(tag, &f.rec, stored);
-    match vmx_birth(tag, p, rung, w, vmcs_pa) {
+    match vmx_birth(tag, p, if rung == 0 { 0 } else { 1 }, rung, w, vmcs_pa) {
+        Birth::Born => Attempt::Born,
+        Birth::Refused33 => Attempt::Refused33,
+        Birth::Stopped => Attempt::Stopped,
+    }
+}
+
+/// One ladder-2 attempt: the same fill, the same dump, the same
+/// birth sequence as every attempt — with the rung's departure
+/// applied as patches after the fill, exactly as ladder-1's
+/// rungs patch theirs. The difference is what the patches touch
+/// and how they compose: ladder-1 walked the GUEST block
+/// cumulatively (EFER, SYSENTER, the entry load bit);
+/// ladder-2's rungs each depart from the MIRROR ALONE, and they
+/// touch the two blocks seven runs never varied — the HOST
+/// state and the CONTROL words:
+///
+///   H1: host data selectors (ES/SS/DS/FS/GS) := 0. Null
+///       selectors are legal host state for everything except
+///       CS/TR (SDM §26.3; KVM's nested host-state check tests
+///       only RPL/TI and the CS/TR/SS null rules) — the rung
+///       removes the host's live GDT indices from the exit
+///       state entirely.
+///   H2: processor-based controls := the capability floor
+///       (must-be-1 | HLT-exiting).
+///   H3: exit controls := the capability floor (must-be-1 |
+///       64-bit host) — the flown word's chosen extras, the
+///       IA32_EFER save/load pair, come off.
+///   H4: entry controls := the capability floor (must-be-1 |
+///       IA-32e-mode guest).
+///   H5: H1+H2+H3+H4 in a single state.
+///
+/// The caller computes each rung's patch list against the flown
+/// values and passes only the pairs that actually differ — a
+/// rung whose variable is already at its floor on this machine
+/// never reaches this function (the caller marks it NOT
+/// APPLICABLE instead of flying the control state under a
+/// second name). `hrung` is 1–5.
+fn vmx_attempt_h(w: &VmxWorld, s: &GuestSegs, hrung: u8,
+                 patches: &[(u64, u64)], vmcs_pa: u64,
+                 stored: &mut Stored) -> Attempt {
+    let p = "ladder2 ";
+    let mut f = Fill::new();
+    vmx_fill(&mut f, w, s);
+    if vmx_wfail_abort(p, &f, w, vmcs_pa) {
+        return Attempt::Stopped;
+    }
+    sprint!("vmx: ladder2 VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
+            f.wcount);
+    for &(field, value) in patches {
+        sprint!("vmx: ladder2 patch (H{}): {} {:#x} (as filled) -> {:#x}\r\n",
+                hrung, vf_name(field), f.rec.get(field).unwrap_or(0), value);
+        if !f.patch(field, value) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
+        }
+    }
+    let tag = match hrung {
+        1 => "ladder2 H1",
+        2 => "ladder2 H2",
+        3 => "ladder2 H3",
+        4 => "ladder2 H4",
+        _ => "ladder2 H5",
+    };
+    vmx_dump(tag, &f.rec, stored);
+    match vmx_birth(tag, p, 2, hrung, w, vmcs_pa) {
         Birth::Born => Attempt::Born,
         Birth::Refused33 => Attempt::Refused33,
         Birth::Stopped => Attempt::Stopped,
