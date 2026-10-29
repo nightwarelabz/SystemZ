@@ -1,0 +1,98 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+
+SystemZ loader â M1
+loader: zcore.elf read, bytes=0x000000000000af08
+loader: segment placed at 0x0000000000200000
+loader: segment placed at 0x0000000000205a18
+loader: segment placed at 0x00000000002082f8
+loader: segment placed at 0x0000000000209000
+loader: entry=0x0000000000200000 â exiting boot services
+loader: boot manifest at 0x000000003da5b000
+
+SystemZ ZCore — M1 skeleton
+cpu vendor: GenuineIntel
+max basic cpuid leaf: 0xd
+vmx (intel): true
+svm (amd):   false
+already virtualized: true
+verdict: hardware virtualization present — ZCore can grow here
+vmx: IA32_FEATURE_CONTROL = 0x100005
+vmx: IA32_VMX_BASIC = 0xd8100011e57ed0 (rev 300252880)
+vmx: IA32_VMX_EPT_VPID_CAP = 0xf0106334041
+zboot: manifest v1 ok — map at 0x3da5c000, 5808 bytes, desc 48 bytes
+zboot: acpi rsdp: 0x3fb7e014
+zboot: memory map: 121 descriptors, conventional (free) 969 MiB, described span 1283 MiB of address space
+vmx: readiness: CPUID.VMX present — building the Intel twin of the first guest
+npt: not applicable on Intel — EPT is this path's nested paging (next groundwork); the NPT tables belong to the AMD path
+vmx: IA32_VMX_BASIC 0xd8100011e57ed0 (vmcs revision 300252880, true-controls true)
+vmx: cr0 0x80010033 cr4 0x2668 (fixed-range adjusted, CR4.VMXE set)
+vmx: VMXON region 0x20e000 (revision 300252880 written from IA32_VMX_BASIC) — VMXON ok
+vmx: VMCS region 0x20d000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: controls from capability MSRs (true-controls): pin 0x16 proc 0x40061f2 exit 0x336ffb entry 0x13fb
+vmx: intercept policy mirrors the SVM path: HLT exiting armed; CPUID exits unconditionally (no control bit exists); EPT untouched — secondary controls off, EPTP never written; EPT is the next groundwork step
+vmx: write FAILED: field 0x4000 (pin-based controls) = 0x16 — VM-instruction error 0 (first failure; class per the SDM error table)
+vmx: write FAILED: field 0x4002 (primary processor-based controls) = 0x40061f2
+vmx: write FAILED: field 0x400c (exit controls) = 0x336ffb
+vmx: write FAILED: field 0x4012 (entry controls) = 0x13fb
+vmx: write FAILED: field 0x6004 (CR0 read shadow) = 0x80010033
+vmx: write FAILED: field 0x6006 (CR4 read shadow) = 0x668
+vmx: control read-back MISMATCH: pin-based controls written 0x16 but read 0x0 — reported writes are not landing
+vmx: control read-back FAILED: primary processor-based controls (0x4002) cannot be read back at all
+vmx: control read-back FAILED: VM-exit controls (0x400c) cannot be read back at all
+vmx: control read-back FAILED: VM-entry controls (0x4012) cannot be read back at all
+vmx: write FAILED: field 0x6c00 (host CR0) = 0x80010033
+vmx: write FAILED: field 0x6c02 (host CR3) = 0x3fc01000
+vmx: write FAILED: field 0x6c04 (host CR4) = 0x2668
+vmx: write FAILED: field 0xc00 (host ES selector) = 0x30
+vmx: write FAILED: field 0xc02 (host CS selector) = 0x38
+vmx: write FAILED: field 0xc04 (host SS selector) = 0x30
+vmx: write FAILED: field 0xc06 (host DS selector) = 0x30
+vmx: write FAILED: field 0xc08 (host FS selector) = 0x30
+vmx: write FAILED: field 0xc0a (host GS selector) = 0x30
+vmx: write FAILED: field 0xc0e (host TR selector) = 0x48
+vmx: write FAILED: field 0x6c0a (host TR base) = 0x3f9db058
+vmx: write FAILED: field 0x6c0c (host GDTR base) = 0x3f9db000
+vmx: write FAILED: field 0x6c0e (host IDTR base) = 0x3bf8bf58
+vmx: write FAILED: field 0x2c02 (host IA32_EFER) = 0xd00
+vmx: write FAILED: field 0x2800 (guest VMCS link pointer) = 0xffffffffffffffff
+vmx: write FAILED: field 0x2804 (guest IA32_PAT) = 0x7040600070406
+vmx: write FAILED: field 0x2806 (guest IA32_EFER) = 0x900
+vmx: write FAILED: field 0x6800 (guest CR0) = 0x80010033
+vmx: write FAILED: field 0x6802 (guest CR3) = 0x3fc01000
+vmx: write FAILED: field 0x6804 (guest CR4) = 0x668
+vmx: write FAILED: field 0x800 (guest ES selector) = 0x30
+vmx: write FAILED: field 0x802 (guest CS selector) = 0x38
+vmx: write FAILED: field 0x804 (guest SS selector) = 0x30
+vmx: write FAILED: field 0x806 (guest DS selector) = 0x30
+vmx: write FAILED: field 0x808 (guest FS selector) = 0x30
+vmx: write FAILED: field 0x80a (guest GS selector) = 0x30
+vmx: write FAILED: field 0x80e (guest TR selector) = 0x48
+vmx: write FAILED: field 0x6814 (guest TR base) = 0x3f9db058
+vmx: write FAILED: field 0x6816 (guest GDTR base) = 0x3f9db000
+vmx: write FAILED: field 0x6818 (guest IDTR base) = 0x3bf8bf58
+vmx: write FAILED: field 0x4800 (guest ES limit) = 0xffffffff
+vmx: write FAILED: field 0x4802 (guest CS limit) = 0xffffffff
+vmx: write FAILED: field 0x4804 (guest SS limit) = 0xffffffff
+vmx: write FAILED: field 0x4806 (guest DS limit) = 0xffffffff
+vmx: write FAILED: field 0x4808 (guest FS limit) = 0xffffffff
+vmx: write FAILED: field 0x480a (guest GS limit) = 0xffffffff
+vmx: write FAILED: field 0x480e (guest TR limit) = 0x67
+vmx: write FAILED: field 0x4810 (guest GDTR limit) = 0x57
+vmx: write FAILED: field 0x4812 (guest IDTR limit) = 0xfff
+vmx: write FAILED: field 0x4814 (guest ES access rights) = 0xc93
+vmx: write FAILED: field 0x4816 (guest CS access rights) = 0xa9b
+vmx: write FAILED: field 0x4818 (guest SS access rights) = 0xc93
+vmx: write FAILED: field 0x481a (guest DS access rights) = 0xc93
+vmx: write FAILED: field 0x481c (guest FS access rights) = 0xc93
+vmx: write FAILED: field 0x481e (guest GS access rights) = 0xc93
+vmx: write FAILED: field 0x4820 (guest LDTR access rights) = 0x10000
+vmx: write FAILED: field 0x4822 (guest TR access rights) = 0x8b
+vmx: write FAILED: field 0x681a (guest DR7) = 0x400
+vmx: write FAILED: field 0x681c (guest RSP) = 0x210000
+vmx: write FAILED: field 0x681e (guest RIP) = 0x205f80
+vmx: write FAILED: field 0x6820 (guest RFLAGS) = 0x2
+vmx: 57 of 87 VMCS field writes FAILED (first failure: field 0x4000 (pin-based controls), VM-instruction error 0) — aborting before any launch attempt
+vmx: post-mortem read-back: guest RIP reads 0x0, expected 0x205f80 — reported successes did NOT stick; the reporter itself is suspect
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+zcore: halting (skeleton ends here, on purpose)
