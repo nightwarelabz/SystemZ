@@ -1,0 +1,750 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+
+SystemZ loader â M1
+loader: zcore.elf read, bytes=0x0000000000013228
+loader: segment placed at 0x0000000000200000
+loader: segment placed at 0x000000000020aae8
+loader: segment placed at 0x00000000002103b8
+loader: segment placed at 0x0000000000211000
+loader: entry=0x0000000000200000 â exiting boot services
+loader: boot manifest at 0x000000003da54000
+
+SystemZ ZCore — M1 skeleton
+cpu vendor: GenuineIntel
+max basic cpuid leaf: 0xd
+vmx (intel): true
+svm (amd):   false
+already virtualized: true
+verdict: hardware virtualization present — ZCore can grow here
+vmx: IA32_FEATURE_CONTROL = 0x100005
+vmx: IA32_VMX_BASIC = 0xd8100011e57ed0 (rev 300252880)
+vmx: IA32_VMX_EPT_VPID_CAP = 0xf0106334041
+zboot: manifest v1 ok — map at 0x3da55000, 5760 bytes, desc 48 bytes
+zboot: acpi rsdp: 0x3fb7e014
+zboot: memory map: 120 descriptors, conventional (free) 969 MiB, described span 1283 MiB of address space
+vmx: readiness: CPUID.VMX present — building the Intel twin of the first guest
+npt: not applicable on Intel — EPT is this path's nested paging (next groundwork); the NPT tables belong to the AMD path
+vmx: IA32_VMX_BASIC 0xd8100011e57ed0 (vmcs revision 300252880, true-controls true)
+vmx: cr0 0x80010033 cr4 0x2668 (fixed-range adjusted, CR4.VMXE set)
+vmx: VMXON region 0x216000 (revision 300252880 written from IA32_VMX_BASIC) — VMXON ok
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: controls from capability MSRs (true-controls): pin 0x16 proc 0x40061f2 exit 0x336ffb entry 0x13fb
+vmx: intercept policy mirrors the SVM path: HLT exiting armed; CPUID exits unconditionally (no control bit exists); EPT untouched — secondary controls off, EPTP never written; EPT is the next groundwork step
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: VMCS filled (host state = this machine now; guest state = its mirror; 87 fields written, 0 write failures)
+vmx: dump [mirror]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x336ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x336ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0x900 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [mirror]: 70 fields read back, 0 mismatched against the intended writes
+vmx: VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (mirror): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (mirror): host RSP 0x3fe86a58, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: x1: the mirror is refused — before the ladders climb again, one attempt flies the REFERENCE state whole: the VMCS recipe of kvm-unit-tests' vmx suite, which launches nested guests on this stack, applied to the mirror in a single patch list (seven deltas; the patch lines name each field)
+vmx: x1: reference sourcing, read this boot: IA32_PAT MSR 0x7040600070406 (the host IA32_PAT field takes it — the fill never writes that field — under an exit word that gains load-IA32_PAT); IA32_GS_BASE MSR 0x0 (host and guest GS bases take it — the fill already sources both from this MSR, so a boot where it reads 0 closes that delta by construction); IA32_SYSENTER_CS, guest and host, takes the live CS selector 0x38 — the selector constant the reference writes, NOT the IA32_SYSENTER_CS MSR, which reads 0 on this vCPU and is why ladder R2's MSR re-source could not move the field
+vmx: x1: reference control requests, capability-adjusted through the same MSRs as the flown words: pin 0x16 -> 0x3f (external-interrupt, NMI and virtual-NMI exiting requested atop the must-be-1 set), exit 0x336ffb -> 0x3b6ffb (load IA32_PAT requested alongside the flown 64-bit-host and EFER save/load bits), entry 0x13fb -> 0x93fb (load IA32_EFER requested with IA-32e-mode guest)
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: x1 VMCS filled (host state = this machine now; guest state = its mirror, reference-state patches follow; 87 fields written, 0 write failures)
+vmx: x1 patch: guest IA32_SYSENTER_CS 0x0 (as filled) -> 0x38
+vmx: x1 patch: host IA32_SYSENTER_CS 0x0 (as filled) -> 0x38
+vmx: x1 patch: guest DR7 0x400 (as filled) -> 0x0
+vmx: x1 patch: guest LDTR limit 0x0 (as filled) -> 0xffff
+vmx: x1 patch: guest LDTR access rights 0x10000 (as filled) -> 0x82
+vmx: x1 patch: entry controls 0x13fb (as filled) -> 0x93fb
+vmx: x1 patch: exit controls 0x336ffb (as filled) -> 0x3b6ffb
+vmx: x1 patch: host IA32_PAT — never written by the fill (VMCLEAR's leftover stands there) -> 0x7040600070406
+vmx: x1 patch: pin-based controls 0x16 (as filled) -> 0x3f
+vmx: x1 patch: host GS base 0x0 (as filled) -> 0x0
+vmx: x1 patch: guest GS base 0x0 (as filled) -> 0x0
+vmx: dump [reference X1]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x3f — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x3b6ffb — as written
+vmx: dump: entry controls stored 0x93fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x93fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=1 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x3b6ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=1 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0x900 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x0 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0xffff ar 0x82 [type 2 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [reference X1]: 70 fields read back, 0 mismatched against the intended writes
+vmx: x1 VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: x1 exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: x1 guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (reference X1): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (reference X1): host RSP 0x3fe87138, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: x1: the reference state was refused at entry too (reason 33) — the L1-visible state now matches, on every axis the extraction found, a recipe that enters on this stack; the remaining delta is structural (the launch bridge, the VMCS-region handling, the entry mechanics), and that is the next front. The ladders below still climb for the record
+vmx: ladder: the mirror guest state was refused at entry (reason 33) — climbing the shared block one variable at a time in the same boot
+vmx: ladder R1: + guest IA32_EFER := the host's live IA32_EFER MSR (the constructed field's clear LMA bit is the suspect)
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder patch (R1): guest IA32_EFER 0x900 (as filled) -> 0xd00 (the host's live IA32_EFER MSR, read this boot)
+vmx: dump [ladder R1]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x336ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x336ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0xd00 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder R1]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder R1): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder R1): host RSP 0x3fe86a58, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder R2: + guest SYSENTER CS/ESP/EIP := the host's live IA32_SYSENTER_* MSRs, read and printed at the patch (R1 retained)
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder patch (R1): guest IA32_EFER 0x900 (as filled) -> 0xd00 (the host's live IA32_EFER MSR, read this boot)
+vmx: ladder patch (R2): host IA32_SYSENTER_CS/ESP/EIP MSRs read 0x38/0x0/0x0 this boot; guest fields re-written from them (CS through the fill's own 32-bit mask: 0x38)
+vmx: dump [ladder R2]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x336ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x336ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0xd00 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder R2]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder R2): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder R2): host RSP 0x3fe86a58, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder R3: + entry controls: load IA32_EFER (SDM bit 15) set explicitly, so the entry itself loads the host-true EFER (R1+R2 retained)
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder patch (R1): guest IA32_EFER 0x900 (as filled) -> 0xd00 (the host's live IA32_EFER MSR, read this boot)
+vmx: ladder patch (R2): host IA32_SYSENTER_CS/ESP/EIP MSRs read 0x38/0x0/0x0 this boot; guest fields re-written from them (CS through the fill's own 32-bit mask: 0x38)
+vmx: ladder patch (R3): entry controls 0x13fb -> 0x93fb (load IA32_EFER, SDM bit 15, requested, then capability-adjusted through the same MSR)
+vmx: dump [ladder R3]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x336ffb — as written
+vmx: dump: entry controls stored 0x93fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x93fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=1 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x336ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0xd00 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder R3]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder R3): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder R3): host RSP 0x3fe86a58, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder R4: NOT APPLICABLE — entry-controls bit 12 is must-be-1 per the capability MSR 0xf3ff000011fb (must-be-1 dword 0x11fb); its presence in the flown controls is architectural, not a choice, and clearing it is not a legal experiment on this machine
+vmx: ladder: no rung entered — 3 rung(s) launched, 3 refused at entry (reason 33); a rung marked NOT APPLICABLE above did not launch. The shared block stands exonerated variable by variable, and the refusal now points beneath ZCore, at how the entry is constructed for a nested guest (KVM's vmcs02 synthesis). The per-rung read-back dumps above are the evidence
+vmx: ladder2: the guest block stands exhausted and the dumps now read the host state back too — what has never varied in seven runs is the HOST state and the CONTROL words. Ladder-2 varies exactly those: single departures from the mirror, nothing cumulative, stopping at the first rung that enters
+vmx: ladder2 H1: host data selectors (ES/SS/DS/FS/GS) := 0 — null selectors are legal host state for everything but CS/TR
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder2 VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder2 patch (H1): host ES selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H1): host SS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H1): host DS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H1): host FS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H1): host GS selector 0x30 (as filled) -> 0x0
+vmx: dump [ladder2 H1]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x336ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x336ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=1 load-efer[21]=1
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0x900 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder2 H1]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder2 VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder2 exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder2 guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder2 H1): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder2 H1): host RSP 0x3fe87138, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder2 H2: NOT APPLICABLE — the flown processor-based controls 0x40061f2 already equal the capability floor 0x40061f2 (must-be-1 | HLT-exiting) on this machine; the word has no variable left to change
+vmx: ladder2 H3: exit controls := the capability floor 0x36ffb (must-be-1 | 64-bit host only; the EFER save/load pair comes off), from flown 0x336ffb
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder2 VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder2 patch (H3): exit controls 0x336ffb (as filled) -> 0x36ffb
+vmx: dump [ladder2 H3]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x36ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x36ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=0 load-efer[21]=0
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0x900 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x30 [index 6 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder2 H3]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder2 VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder2 exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder2 guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder2 H3): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder2 H3): host RSP 0x3fe87138, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder2 H4: NOT APPLICABLE — the flown entry controls 0x13fb already equal the capability floor 0x13fb (must-be-1 | IA-32e-mode guest) on this machine; the word has no variable left to change
+vmx: ladder2 H5: the combined departure — every applicable single departure above, in one state
+vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to 0x80010033/0x2668, VMXON ok)
+vmx: VMCS region 0x215000 (revision 300252880, shadow indicator clear) — VMCLEAR + VMPTRLD ok
+vmx: control read-back: pin/proc/exit/entry all read back exactly as written
+vmx: ladder2 VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; 87 fields written, 0 write failures)
+vmx: ladder2 patch (H5): host ES selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H5): host SS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H5): host DS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H5): host FS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H5): host GS selector 0x30 (as filled) -> 0x0
+vmx: ladder2 patch (H5): exit controls 0x336ffb (as filled) -> 0x36ffb
+vmx: dump [ladder2 H5]: state as stored in the VMCS (VMREAD after the fill, before any launch)
+vmx: dump: pin-based controls stored 0x16 — as written
+vmx: dump: primary processor-based controls stored 0x40061f2 — as written
+vmx: dump: exit controls stored 0x36ffb — as written
+vmx: dump: entry controls stored 0x13fb — as written
+vmx: dump: exception bitmap stored 0x0 — as written
+vmx: dump: page-fault error-code mask stored 0x0 — as written
+vmx: dump: page-fault error-code match stored 0x0 — as written
+vmx: dump: CR3-target count stored 0x0 — as written
+vmx: dump: entry MSR-load count stored 0x0 — as written
+vmx: dump: exit MSR-store count stored 0x0 — as written
+vmx: dump: exit MSR-load count stored 0x0 — as written
+vmx: dump: entry interruption information stored 0x0 — as written
+vmx: dump: CR0 guest/host mask stored 0x0 — as written
+vmx: dump: CR4 guest/host mask stored 0x0 — as written
+vmx: dump: CR0 read shadow stored 0x80010033 — as written
+vmx: dump: CR4 read shadow stored 0x668 — as written
+vmx: dump: secondary processor-based controls stored 0x0 (never written — secondary controls inactive (primary bit 31 clear))
+vmx: dump: entry controls 0x13fb decoded (SDM VM-entry controls): load-debug[2]=0 ia32e-guest[9]=1 load-perf-global[13]=0 load-pat[14]=0 load-efer[15]=0 load-bndcfgs[16]=0
+vmx: dump: exit controls 0x36ffb decoded (SDM VM-exit controls): host-64[9]=1 load-perf-global[12]=0 save-pat[18]=0 load-pat[19]=0 save-efer[20]=0 load-efer[21]=0
+vmx: dump: guest VMCS link pointer stored 0xffffffffffffffff — as written
+vmx: dump: guest IA32_PAT stored 0x7040600070406 — as written
+vmx: dump: guest IA32_EFER stored 0x900 — as written
+vmx: dump: guest CR0 stored 0x80010033 — as written
+vmx: dump: guest CR3 stored 0x3fc01000 — as written
+vmx: dump: guest CR4 stored 0x668 — as written
+vmx: dump: guest DR7 stored 0x400 — as written
+vmx: dump: guest RSP stored 0x218000 — as written
+vmx: dump: guest RIP stored 0x20b128 — as written
+vmx: dump: guest RFLAGS stored 0x2 — as written
+vmx: dump: guest interruptibility state stored 0x0 — as written
+vmx: dump: guest activity state stored 0x0 — as written
+vmx: dump: guest pending debug exceptions stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: guest IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: guest IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: guest GDTR base stored 0x3f9db000 — as written
+vmx: dump: guest GDTR limit stored 0x57 — as written
+vmx: dump: guest IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: guest IDTR limit stored 0xfff — as written
+vmx: dump: guest IA32_DEBUGCTL stored 0x0 (never written — entry does not load it (entry-controls bit 2 clear))
+vmx: dump: guest IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — entry does not load it (entry-controls bit 13 clear))
+vmx: dump: guest ES sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest CS sel 0x38 base 0x0 limit 0xffffffff ar 0xa09b [type 11 s 1 dpl 0 p 1 avl 0 l 1 d/b 0 g 1 unusable 0] — as written
+vmx: dump: guest SS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest DS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest FS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest GS sel 0x30 base 0x0 limit 0xffffffff ar 0xc093 [type 3 s 1 dpl 0 p 1 avl 0 l 0 d/b 1 g 1 unusable 0] — as written
+vmx: dump: guest LDTR sel 0x0 base 0x0 limit 0x0 ar 0x10000 [type 0 s 0 dpl 0 p 0 avl 0 l 0 d/b 0 g 0 unusable 1] — as written
+vmx: dump: guest TR sel 0x48 base 0x3f9db058 limit 0x67 ar 0x8b [type 11 s 0 dpl 0 p 1 avl 0 l 0 d/b 0 g 0 unusable 0] — as written
+vmx: dump: host CR0 stored 0x80010033 — as written
+vmx: dump: host CR3 stored 0x3fc01000 — as written
+vmx: dump: host CR4 stored 0x2668 — as written
+vmx: dump: host IA32_SYSENTER_CS stored 0x38 — as written
+vmx: dump: host IA32_SYSENTER_ESP stored 0x0 — as written
+vmx: dump: host IA32_SYSENTER_EIP stored 0x0 — as written
+vmx: dump: host IA32_EFER stored 0xd00 — as written
+vmx: dump: host FS base stored 0x0 — as written
+vmx: dump: host GS base stored 0x0 — as written
+vmx: dump: host TR base stored 0x3f9db058 — as written
+vmx: dump: host GDTR base stored 0x3f9db000 — as written
+vmx: dump: host IDTR base stored 0x3bf8bf58 — as written
+vmx: dump: host ES selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host CS selector stored 0x38 [index 7 ti 0 rpl 0] — as written
+vmx: dump: host SS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host DS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host FS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host GS selector stored 0x0 [index 0 ti 0 rpl 0] — as written
+vmx: dump: host TR selector stored 0x48 [index 9 ti 0 rpl 0] — as written
+vmx: dump: host IA32_PAT stored 0x0 (never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host IA32_PERF_GLOBAL_CTRL stored 0x0 (never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record)
+vmx: dump: host RSP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump: host RIP (bridge-written) stored 0x0 (bridge-written inside vmx_launch, after this dump — the value stored now is VMCLEAR's leftover; the value the launch flew is read back in the entry forensics)
+vmx: dump [ladder2 H5]: 70 fields read back, 0 mismatched against the intended writes
+vmx: ladder2 VMLAUNCH #1 — guest enters at 0x20b128 (the same 7-byte program as the SVM guest)
+vmx: ladder2 exit #1 reason 33 (cpuid=10, hlt=12) guest rip 0x20b128 guest rax 0x5eed5eed5eed5eed
+vmx: ladder2 guest birth FAILED at first exit (reason 33)
+vmx: entry forensics (ladder2 H5): exit qualification 0x0, exit interruption-information 0x0 (read back after the failed entry)
+vmx: entry forensics (ladder2 H5): host RSP 0x3fe87138, host RIP 0x204950 (bridge-written values as they stood at the launch attempt)
+vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values
+vmx: ladder2: no rung entered — 3 rung(s) launched, 3 refused at entry (reason 33); rungs marked NOT APPLICABLE or DUPLICATE above did not launch. The host state and the control words now stand varied or exonerated beside everything else; what remains lies beneath the L1-visible VMCS — KVM's vmcs02 synthesis and the hardware entry checks upon it. The dumps above are the complete L1-side evidence
+zcore: halting (skeleton ends here, on purpose)
