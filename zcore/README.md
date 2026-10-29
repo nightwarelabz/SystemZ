@@ -16,6 +16,14 @@ Rust core those seams attach to.
 - Consumes the loader's boot manifest (mirror of `loader/zboot.h`):
   verifies its magic, then reports the UEFI memory map — descriptor
   count, conventional (free) memory — and the ACPI RSDP address.
+- First SVM guest machinery is complete: hand-built VMCB, host save
+  area, a `svm_launch` register bridge, CPUID/HLT intercepts with
+  CPUID emulation. **Its birth is NOT yet proven**: on QEMU 8.2.2 TCG,
+  VMRUN returns instantly without the guest executing (proven by a
+  control run: zero intercepts + an infinite-loop guest still
+  "returns" at once). ZCore detects this and says so on serial rather
+  than claiming a birth. The proof belongs on physical hardware or a
+  KVM-capable host — M2's first owed witness.
 - Builds for `x86_64-unknown-none` with `linker.ld`.
 - **Boots through our UEFI loader under QEMU/OVMF** — proven
   2026-10-28, see `proofs/qemu-serial.log` (architecture proof, not a
