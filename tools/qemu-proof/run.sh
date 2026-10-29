@@ -63,10 +63,15 @@ cat "$SERIAL_LOG" || true
 # this environment's VMRUN did not enter (QEMU TCG's is a no-op —
 # proven by control experiment, see zcore/src/main.rs). What the
 # harness must never do is claim a birth that did not happen.
+# The NPT groundwork must self-verify (its census is only worth
+# printing if the software walk agrees with the builder), and the
+# VMX readiness block must appear — present or honestly absent.
 if grep -q "SystemZ ZCore" "$SERIAL_LOG" && grep -q "verdict:" "$SERIAL_LOG" \
    && grep -q "zboot: memory map:" "$SERIAL_LOG" \
-   && grep -Eq "GUEST BORN|guest birth NOT CLAIMED" "$SERIAL_LOG"; then
-  echo "QEMU PROOF: PASS — boot chain, manifest, SVM attempt honestly reported"
+   && grep -Eq "GUEST BORN|guest birth NOT CLAIMED" "$SERIAL_LOG" \
+   && grep -q "npt: self-check PASS" "$SERIAL_LOG" \
+   && grep -q "vmx: readiness" "$SERIAL_LOG"; then
+  echo "QEMU PROOF: PASS — boot chain, manifest, NPT self-check, VMX readiness, SVM attempt honestly reported"
 else
   echo "QEMU PROOF: FAIL — expected ZCore evidence not seen on serial" >&2
   exit 1
