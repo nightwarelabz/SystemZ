@@ -259,3 +259,55 @@ the existence of code alone.
   sourcing. The next build flies that reference state
   whole, as one rung (X1) between the mirror and the
   ladders. Guest birth still NOT proven.
+- `vm-serial-2026-10-29-run9.log` — the reference-state run
+  (same harness, same machine, rung X1 flown between the
+  mirror and the ladders). X1 applied kvm-unit-tests'
+  VMCS recipe to the mirror whole — all seven deltas at
+  once: guest and host SYSENTER_CS := the live CS selector
+  (the reference writes its kernel-CS constant, not the
+  SYSENTER_CS MSR, which reads 0 on this vCPU — the value
+  ladder R2 had certified at its source without changing),
+  guest DR7 := 0, the guest LDTR in its usable form
+  (limit 0xFFFF, access rights 0x82), entry controls with
+  load-IA32_EFER requested alongside IA-32e-mode guest,
+  exit controls with load-IA32_PAT requested and host
+  IA32_PAT := the live MSR (that field judged in the dump
+  for the first time), pin controls with external-
+  interrupt / NMI / virtual-NMI exiting requested atop
+  the must-be-1 set, and both GS bases re-sourced from
+  the live IA32_GS_BASE MSR (which read 0 this boot, so
+  that delta closed by construction — the dump proves
+  it). The patches landed exactly as listed, the dump
+  stored **70/70 clean** — and X1 was **refused at entry,
+  reason 33**, identically to the mirror, ladder-1 and
+  ladder-2, which climbed after it for the record. With
+  this run, every L1-visible VMCS field value stands
+  exonerated from BOTH directions: ZCore flew the
+  reference recipe whole and was refused, and the
+  reference suite itself — poisoned in the parent's
+  experiment on this EliteDesk with all of ZCore's
+  values at once (SYSENTER_CS 0, DR7 0x400, the unusable
+  LDTR, no load-EFER, no load-PAT, the minimal pin word)
+  — still PASSED its nested launches; the reference
+  passes under q35 with SMM as well. No field value
+  separates ZCore's state from one that enters here.
+  Two variables have nevertheless never moved in nine
+  runs, because the mirror design exempts them: the
+  guest CR3's target STRUCTURE (every attempt translated
+  the guest through the FIRMWARE's page tables — OVMF's,
+  at 0x3fc01000 — where the reference's guest CR3 names
+  tables its own kernel built) and the exact guest
+  CR0/CR4 PROVENANCE (ZCore's are capability-adjusted
+  constructions, CR4's VMXE deliberately cleared, where
+  the reference flies its live CRs, read_cr0() /
+  read_cr4(), exactly as read). The next build flies
+  the two structure rungs, Y1 and Y2, immediately after
+  the mirror: Y1 points the guest CR3 at the groundwork
+  tables ZCore builds itself (audited in the log before
+  launch — the code and stack pages identity-mapped,
+  the root's low bits clean, the NX/EFER ruling
+  printed); Y2 flies the guest CRs, and their shadows,
+  as the host's live post-VMXON reads, unedited. If
+  both refuse, the last unvaried family is the entry
+  mechanics themselves — the launch bridge and the
+  VMCS-region handling. Guest birth still NOT proven.

@@ -253,10 +253,18 @@ NPT_NA_LINE="$(line 'npt: not applicable')"
 if [ -n "$NPT_LINE" ]; then
   echo "npt:         $NPT_LINE"
 elif [ -n "$NPT_NA_LINE" ]; then
-  # Intel path: the NPT block is AMD-only, and ZCore says so in the
-  # log itself. Absence of the self-check there is by design, never
-  # a failure — but only when this line stands in its place.
+  # Intel path, pre-Y1 logs: the NPT block was AMD-only then, and
+  # ZCore said so in the log itself. Absence of the self-check
+  # there is by design, never a failure — but only when this line
+  # stands in its place. Current logs build the tables on the
+  # Intel path too (for rung Y1's guest CR3) and take the
+  # self-check branch above.
   echo "npt:         not applicable on this path — $NPT_NA_LINE"
+elif [ -n "$(line 'npt: skipped')" ]; then
+  # The tables were NOT built this boot (no manifest, or its
+  # magic refused): rung Y1 will have reported NOT APPLICABLE
+  # and not flown. Say so rather than calling the block missing.
+  echo "npt:         tables not built — $(line 'npt: skipped')"
 else
   echo "npt:         MISSING — no self-check line and no not-applicable line in the log"
 fi
@@ -278,6 +286,24 @@ if grep -q 'vmx: GUEST BORN' "$LOG"; then
     # the x1 patch lines in the log carry each delta's field
     # and value. Quote the rung line whole.
     BIRTH_WHY="VMX path: $(line 'vmx: born on ladder rung X1') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on ladder rung Y1' "$LOG"; then
+    # Born on the first structure rung: the guest entered under
+    # ZCore's OWN page tables — its CR3 named the groundwork
+    # root, audited in the log (code and stack pages identity-
+    # mapped, the NX/EFER ruling printed) — where every refused
+    # state translated through the firmware's tables. The seat
+    # of the refusal was whose tables CR3 names. These greps
+    # must precede the generic 'born on ladder rung' branch:
+    # the Y lines carry that substring too.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on ladder rung Y1') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on ladder rung Y2' "$LOG"; then
+    # Born on the second structure rung: the guest entered on
+    # the host's CRs read live, post-VMXON, unedited — VMXE
+    # standing in its CR4 — where every refused state flew the
+    # mirror's constructed CRs. The seat of the refusal was
+    # the CRs' provenance. The y2 line in the log carries the
+    # raw reads.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on ladder rung Y2') ($(line 'vmx: GUEST BORN'))"
   elif grep -q 'born on ladder-2 rung' "$LOG"; then
     # Born on a ladder-2 rung: the variable was in the HOST
     # state or a CONTROL word — the two blocks that had never
@@ -325,7 +351,19 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     12) REASON_NAME="HLT exit — the guest ran but halted before its CPUID; not the birth sequence" ;;
     *)  REASON_NAME="not classified here — the log line itself is the evidence" ;;
   esac
-  if grep -q 'vmx: x1 exit #1 reason' "$LOG"; then
+  if grep -q 'vmx: y1 exit #1 reason' "$LOG"; then
+    # The structure rungs ran (they fly ahead of X1, so an X1
+    # line is also present below — this branch must come
+    # first): neither entered. Whose tables the guest CR3
+    # names (Y1 — ZCore's own, audited in the log) and the
+    # guest CRs' provenance (Y2 — the host's live CRs, read
+    # post-VMXON, unedited) now stand varied beside every
+    # field value. The last unvaried family is the entry
+    # mechanics themselves — the launch bridge and the
+    # VMCS-region handling — and the dumps in the log are
+    # the complete evidence.
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the structure rungs ran and neither entered: $(line 'vmx: y1 exit #1 reason') / $(line 'vmx: y2 exit #1 reason') — whose tables the guest CR3 names and the guest CRs' provenance now stand varied beside every field value; the last unvaried family is the entry mechanics themselves (the launch bridge, the VMCS-region handling), and the dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
+  elif grep -q 'vmx: x1 exit #1 reason' "$LOG"; then
     # The reference state was refused too: a state matching —
     # on every axis the extraction found — the VMCS recipe of
     # kvm-unit-tests' vmx suite, which enters on this stack.

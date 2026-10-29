@@ -1515,14 +1515,19 @@ fn vmx_teardown(vmcs_pa: u64, vmcs_current: bool, orig_cr0: u64, orig_cr4: u64) 
     sprint!("vmx: teardown: VMXOFF done, host cr0/cr4 restored to their pre-VMX values\r\n");
 }
 
-fn vmx_first_guest() {
+fn vmx_first_guest(manifest_addr: u64) {
     sprint!("vmx: readiness: CPUID.VMX present — building the Intel twin of the first guest\r\n");
-    // The NPT block belongs to the AMD path (it is built inside
-    // svm_first_guest). Say so on this path, explicitly, so the
-    // absence of an "npt: self-check" line in an Intel log can never
-    // be misread as a missing or failed step — the verdict script
-    // keys on this line.
-    sprint!("npt: not applicable on Intel — EPT is this path's nested paging (next groundwork); the NPT tables belong to the AMD path\r\n");
+    // The groundwork tables are built on this path too — for
+    // exactly one named purpose, stated here so their lines in an
+    // Intel log are never misread: rung Y1 (below) flies the
+    // guest with its CR3 naming THESE tables instead of the
+    // firmware's. EPT is still unbuilt on this path (secondary
+    // controls stay off), and the tables' own closing line —
+    // the root is NOT wired into the VMCB, nCR3 never written —
+    // stays true of the AMD path; Y1's wiring of the same root
+    // into a VMCS is Y1's own act, announced in its preamble.
+    sprint!("npt: on Intel the groundwork tables are built for one rung only — Y1's guest CR3 names them; EPT remains this path's unbuilt nested paging\r\n");
+    build_npt(manifest_addr);
 
     // ---- firmware gate: IA32_FEATURE_CONTROL ----
     let mut fc = rdmsr(msr_vmx::FEATURE_CONTROL);
@@ -1674,6 +1679,95 @@ fn vmx_first_guest() {
     let mut stored_r0 = Stored::new();
     match vmx_attempt(&world, &mirror, 0, vmcs_pa, &mut stored_r0) {
         Attempt::Refused33 => {}
+        _ => return,
+    }
+
+    // ---- rungs Y1/Y2: the never-varied structure ----
+    // Nine runs have now exonerated every L1-visible VMCS field
+    // VALUE from both directions: rung X1 flew the reference
+    // recipe whole and was refused, and the reference suite
+    // itself — poisoned with all of the mirror's suspect values
+    // at once (SYSENTER_CS 0, DR7 0x400, the unusable LDTR, no
+    // load-EFER, no load-PAT, the minimal pin word) — still
+    // launches its nested guests on this machine. What has
+    // NEVER moved, in any run, are the two things the mirror
+    // design exempts from variation by construction:
+    //   * WHOSE page tables the guest CR3 names. Every attempt
+    //     so far translated the guest through the FIRMWARE's
+    //     tables (OVMF's CR3, mirrored). The reference's guest
+    //     CR3 names tables its own kernel built.
+    //   * The PROVENANCE of the guest CR0/CR4. The mirror
+    //     constructs them (capability-clipped, CR4's VMXE bit
+    //     deliberately cleared); the reference flies
+    //     read_cr0()/read_cr4() exactly as read, VMXE included.
+    // Y1 and Y2 vary exactly those two, flown ahead of X1 and
+    // the ladders. If either enters, the refusal was never a
+    // field value at all — it was structure.
+    // ---- Y1: guest CR3 := ZCore's own page tables ----
+    // The groundwork builder (PR #8) already builds identity
+    // tables in ZCore's own memory from the manifest and
+    // verifies them in software — they were built at the top of
+    // this function for this rung. Before any launch, the audit
+    // (vmx_y1_audit) walks them for the two pages the guest
+    // will actually touch — its code page and its stack page —
+    // and prints the root, the walks, and the NX/EFER ruling.
+    // A failed audit means the rung does not fly: no launch is
+    // attempted on tables that do not provably identity-map
+    // the guest.
+    sprint!("vmx: y1: the mirror is refused — the first structure rung flies the guest under ZCore's OWN page tables: guest CR3 := the groundwork root built this boot, where every refused state named the firmware's tables. The audit comes first; the launch flies only on its pass\r\n");
+    match vmx_y1_audit(&world) {
+        Some((y1_root, y1_nx)) => {
+            let y1_patches: [(u64, u64); 2] =
+                [(vf::G_CR3, y1_root), (vf::G_EFER, world.efer_now)];
+            let y1_n = if y1_nx { 2 } else { 1 };
+            if !vmx_reenter(adj_cr0, adj_cr4, vmxon_pa, revision, vmcs_pa,
+                            orig_cr0, orig_cr4) {
+                return;
+            }
+            let mut stored_y1 = Stored::new();
+            match vmx_attempt_y(&world, &mirror, 1, &y1_patches[..y1_n],
+                                vmcs_pa, &mut stored_y1) {
+                Attempt::Refused33 => {
+                    sprint!("vmx: y1: refused at entry (reason 33) — the guest's translation structure is exonerated beside its values: the same state, word for word, under ZCore's own audited tables is refused exactly as under the firmware's. The refusal does not live in whose tables CR3 names\r\n");
+                }
+                _ => return,
+            }
+        }
+        None => {
+            sprint!("vmx: y1: NOT APPLICABLE — the audit above fails, so the rung does not fly: no launch is attempted on tables that do not provably identity-map the guest's code and stack pages\r\n");
+        }
+    }
+
+    // ---- Y2: guest CRs := the raw live host CRs ----
+    // Read AFTER the VMX re-entry below, at the last moment
+    // before the fill: the values are whatever the host CPU
+    // holds then — post-VMXON, VMXE standing in CR4 — exactly
+    // the read the reference's init_vmcs_guest performs. No
+    // capability adjustment, no VMXE clear, no shadow split:
+    // the guest CR0/CR4 and their read shadows all take the
+    // live values, so the CR state the entry judges is the
+    // host's own, unedited.
+    if !vmx_reenter(adj_cr0, adj_cr4, vmxon_pa, revision, vmcs_pa,
+                    orig_cr0, orig_cr4) {
+        return;
+    }
+    let raw_cr0 = read_cr(0);
+    let raw_cr4 = read_cr(4);
+    sprint!("vmx: y2: guest CR0/CR4 := the host's CRs read live NOW (post-VMXON, after re-entry), with no adjustment of any kind — CR0 {:#x} CR4 {:#x}; the mirror flew guest CR0 {:#x} (itself the raw pre-VMXON read) and guest CR4 {:#x} — the live CR4 with VMXE (bit 13) DELIBERATELY cleared, where this rung's live read carries VMXE standing ({})\r\n",
+            raw_cr0, raw_cr4, world.guest_cr0, world.guest_cr4,
+            if raw_cr4 & (1 << 13) != 0 { "bit 13 reads 1 in the live value" } else { "bit 13 reads 0 in the live value on this machine" });
+    let y2_patches: [(u64, u64); 4] = [
+        (vf::G_CR0, raw_cr0),
+        (vf::G_CR4, raw_cr4),
+        (vf::CR0_SHADOW, raw_cr0),
+        (vf::CR4_SHADOW, raw_cr4),
+    ];
+    let mut stored_y2 = Stored::new();
+    match vmx_attempt_y(&world, &mirror, 2, &y2_patches, vmcs_pa,
+                        &mut stored_y2) {
+        Attempt::Refused33 => {
+            sprint!("vmx: y2: refused at entry (reason 33) — the CRs' provenance is exonerated beside their values: the host's own CRs, read live and flown unedited, are refused exactly as the constructed pair was. The never-varied structure now stands varied in full — whose tables the guest CR3 names (Y1) and where the guest CRs come from (Y2) — and what remains unvaried is the entry mechanics themselves: the launch bridge and the VMCS-region handling. X1 and the ladders follow for the record\r\n");
+        }
         _ => return,
     }
 
@@ -2792,6 +2886,24 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
             // down one per run. The rung's patch lines above
             // carry each delta's field and value.
             sprint!("vmx: born on ladder rung X1 (reference state)\r\n");
+        } else if kind == 4 {
+            // The structure rungs: the variable was never a
+            // field VALUE but a provenance. Y1 changed WHOSE
+            // page tables the guest CR3 names — the guest just
+            // ran translated by tables ZCore built itself,
+            // which convicts the firmware's tables as the seat
+            // of every refusal before it; Y1's audit lines
+            // above are the proof the tables identity-map the
+            // guest. Y2 changed WHERE the guest CRs come from —
+            // the host's live CRs, read post-VMXON and flown
+            // unedited — which convicts the mirror's
+            // constructed CRs (above all the cleared VMXE) the
+            // same way; the y2 line above carries the raw reads.
+            if rung == 1 {
+                sprint!("vmx: born on ladder rung Y1 (own page tables)\r\n");
+            } else {
+                sprint!("vmx: born on ladder rung Y2 (raw host CRs)\r\n");
+            }
         } else if kind == 2 {
             // Ladder-2's rungs depart from the mirror ALONE (no
             // accumulation): the delta names the single departure
@@ -3137,6 +3249,177 @@ fn vmx_attempt_x1(w: &VmxWorld, s: &GuestSegs, patches: &[(u64, u64)],
     }
 }
 
+/// One Y1 audit walk of ZCore's own tables for `gpa`, recording
+/// what the rung must know before it flies: whether every level
+/// is present, the leaf it lands on (and whether that leaf is a
+/// 2 MiB large page), whether the leaf maps the GPA identity,
+/// and whether the NX bit stands ANYWHERE on the walk — the
+/// last being the audit's EFER input: with NX in force on a
+/// page the guest executes or stacks on, the entry's EFER and
+/// the tables must agree, and the rung's rule (below) is what
+/// they agree on. The builder's own verifier (npt_lookup)
+/// answers presence only; an audit that will send a guest
+/// through these tables owes the fuller read.
+struct Y1Walk {
+    present: bool,
+    identity: bool,
+    nx: bool,
+    leaf: u64,
+    large: bool,
+}
+
+fn y1_walk(pml4: *const u8, gpa: u64) -> Y1Walk {
+    let mut nx = false;
+    let e = npt_r64(pml4, ((gpa >> 39) & 0x1FF) as usize);
+    if e & NP_P == 0 {
+        return Y1Walk { present: false, identity: false, nx: false, leaf: 0, large: false };
+    }
+    nx |= e & NP_NX != 0;
+    let pdpt = (e & 0x000F_FFFF_FFFF_F000) as *const u8;
+    let e = npt_r64(pdpt, ((gpa >> 30) & 0x1FF) as usize);
+    if e & NP_P == 0 {
+        return Y1Walk { present: false, identity: false, nx, leaf: 0, large: false };
+    }
+    nx |= e & NP_NX != 0;
+    let pd = (e & 0x000F_FFFF_FFFF_F000) as *const u8;
+    let e = npt_r64(pd, ((gpa >> 21) & 0x1FF) as usize);
+    if e & NP_P == 0 {
+        return Y1Walk { present: false, identity: false, nx, leaf: 0, large: false };
+    }
+    nx |= e & NP_NX != 0;
+    if e & NP_PS != 0 {
+        let base = e & 0x000F_FFFF_FFE0_0000;
+        return Y1Walk {
+            present: true,
+            identity: base == (gpa & !0x1F_FFFFu64),
+            nx,
+            leaf: e,
+            large: true,
+        };
+    }
+    let pt = (e & 0x000F_FFFF_FFFF_F000) as *const u8;
+    let e = npt_r64(pt, ((gpa >> 12) & 0x1FF) as usize);
+    if e & NP_P == 0 {
+        return Y1Walk { present: false, identity: false, nx, leaf: 0, large: false };
+    }
+    nx |= e & NP_NX != 0;
+    Y1Walk {
+        present: true,
+        identity: (e & 0x000F_FFFF_FFFF_F000) == (gpa & !0xFFFu64),
+        nx,
+        leaf: e,
+        large: false,
+    }
+}
+
+/// The Y1 audit: the homework rung Y1 flies on, printed in
+/// full before any launch. Three questions, in order:
+///   (c) the root's form — the value written to guest CR3 is
+///       the table root itself; the mirror's guest CR4 carries
+///       PCIDE clear, so guest CR3 may carry no low bits, and
+///       the root (a 4 KiB-aligned static) must stand clean.
+///   (a) coverage — the built tables must identity-map the
+///       guest's code page (guest RIP's page) and its stack
+///       page (the page guest RSP descends into), the only two
+///       pages the 7-byte guest program touches.
+///   (b) the NX/EFER ruling — if NX stands anywhere on either
+///       walk, the rung flies guest IA32_EFER := the host's
+///       live MSR value WITH the CR3 patch, so the entry's
+///       EFER and the tables agree on execute-disable by
+///       construction. Attribution survives the pairing:
+///       ladder R1 already refused that very EFER under the
+///       firmware's CR3, so a birth on this rung still
+///       convicts the tables, not the EFER. If both walks are
+///       NX-free, the mirror's constructed EFER flies
+///       untouched and CR3 is the rung's only variable.
+/// Returns Some((cr3 value, nx on the guest's walk)) when the
+/// rung may fly, None when it must not.
+fn vmx_y1_audit(w: &VmxWorld) -> Option<(u64, bool)> {
+    let root = core::ptr::addr_of!(NPT_PML4) as u64;
+    sprint!("vmx: y1: audit: guest CR3 candidate {:#x} — the root of the tables ZCore built this boot (the groundwork's npt root); every refused state's guest CR3 named {:#x}, the firmware's tables\r\n",
+            root, w.guest_cr3);
+    let low_clean = root & 0xFFF == 0;
+    sprint!("vmx: y1: audit: (c) root form — low 12 bits {:#x}, {}: the CR3 value the rung writes is the root itself, and the mirror's guest CR4 carries PCIDE clear, so no low bits may stand\r\n",
+            root & 0xFFF,
+            if low_clean { "clean" } else { "NOT CLEAN — the rung must not fly" });
+    let code = y1_walk(root as *const u8, w.code_pa);
+    sprint!("vmx: y1: audit: (a) guest code page {:#x} (the page guest RIP enters): walk {} — leaf {:#x} ({} page), identity {}, NX on this walk {}\r\n",
+            w.code_pa,
+            if code.present { "present at every level" } else { "NOT PRESENT — the rung must not fly" },
+            code.leaf,
+            if code.large { "2 MiB large" } else { "4 KiB" },
+            if code.identity { "yes — the leaf names this very page" } else { "NO — the leaf names another page" },
+            if code.nx { "SET" } else { "clear" });
+    let stack_gpa = w.guest_rsp - 1;
+    let stack = y1_walk(root as *const u8, stack_gpa);
+    sprint!("vmx: y1: audit: (a) guest stack page {:#x} (the page guest RSP {:#x} descends into): walk {} — leaf {:#x} ({} page), identity {}, NX on this walk {}\r\n",
+            stack_gpa, w.guest_rsp,
+            if stack.present { "present at every level" } else { "NOT PRESENT — the rung must not fly" },
+            stack.leaf,
+            if stack.large { "2 MiB large" } else { "4 KiB" },
+            if stack.identity { "yes — the leaf names this very page" } else { "NO — the leaf names another page" },
+            if stack.nx { "SET" } else { "clear" });
+    if !(low_clean && code.present && code.identity && stack.present && stack.identity) {
+        sprint!("vmx: y1: audit: FAIL — the tables do not provably identity-map the guest under a clean root; the rung does not fly\r\n");
+        return None;
+    }
+    let nx = code.nx || stack.nx;
+    if nx {
+        sprint!("vmx: y1: audit: (b) NX stands on the guest's walk — the rung flies guest IA32_EFER := the host's live MSR {:#x} WITH the CR3 patch, so the entry's EFER and the tables agree on execute-disable by construction. Attribution: ladder R1 already refused that very EFER under the firmware's CR3, so a birth here still convicts the tables, not the EFER\r\n",
+                w.efer_now);
+    } else {
+        sprint!("vmx: y1: audit: (b) the guest's walk is NX-free — guest IA32_EFER stays the mirror's constructed {:#x}, untouched; CR3 is this rung's only variable\r\n",
+                w.guest_efer);
+    }
+    sprint!("vmx: y1: audit: PASS — the rung flies: guest CR3 {:#x} (the firmware's {:#x} in every refused state){}\r\n",
+            root, w.guest_cr3,
+            if nx { ", with the host-true EFER paired per ruling (b)" } else { "" });
+    Some((root, nx))
+}
+
+/// One structure-rung attempt (Y1/Y2): the same fill, the same
+/// dump, the same birth sequence as every attempt — with the
+/// caller's patch list applied after the fill. Where the
+/// ladders change field VALUES one at a time and X1 changed
+/// seven at once, the Y rungs change PROVENANCE: Y1 points the
+/// guest CR3 at tables ZCore built itself (audited in
+/// vmx_y1_audit, with the host-true EFER paired only when the
+/// audit's NX ruling demands it), and Y2 takes the guest CRs —
+/// and their read shadows — from the host's live registers,
+/// read post-VMXON by the caller with no adjustment. `yrung`
+/// is 1 or 2.
+fn vmx_attempt_y(w: &VmxWorld, s: &GuestSegs, yrung: u8,
+                 patches: &[(u64, u64)], vmcs_pa: u64,
+                 stored: &mut Stored) -> Attempt {
+    let p = if yrung == 1 { "y1 " } else { "y2 " };
+    let mut f = Fill::new();
+    vmx_fill(&mut f, w, s);
+    if vmx_wfail_abort(p, &f, w, vmcs_pa) {
+        return Attempt::Stopped;
+    }
+    sprint!("vmx: {}VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
+            p, f.wcount);
+    for &(field, value) in patches {
+        match f.rec.get(field) {
+            Some(old) => sprint!("vmx: {}patch: {} {:#x} (as filled) -> {:#x}\r\n",
+                                 p, vf_name(field), old, value),
+            None => sprint!("vmx: {}patch: {} — never written by the fill (VMCLEAR's leftover stands there) -> {:#x}\r\n",
+                            p, vf_name(field), value),
+        }
+        if !f.patch(field, value) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
+        }
+    }
+    let tag = if yrung == 1 { "cr3 Y1" } else { "cr3 Y2" };
+    vmx_dump(tag, &f.rec, stored);
+    match vmx_birth(tag, p, 4, yrung, w, vmcs_pa) {
+        Birth::Born => Attempt::Born,
+        Birth::Refused33 => Attempt::Refused33,
+        Birth::Stopped => Attempt::Stopped,
+    }
+}
+
 // ---------------------------------------------------------------- entry
 
 #[link_section = ".text.boot"]
@@ -3179,7 +3462,7 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
     }
 
     if caps.vmx {
-        vmx_first_guest();
+        vmx_first_guest(manifest_addr);
     } else {
         vmx_readiness_absent();
     }
