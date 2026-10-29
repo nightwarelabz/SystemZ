@@ -12,26 +12,12 @@ set -eu
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 
-export PATH="$HOME/.cargo/bin:$PATH"
-
-echo "== build zcore =="
-(cd zcore && cargo build --release)
-ZCORE_ELF="$ROOT/zcore/target/x86_64-unknown-none/release/zcore"
-
-echo "== build loader =="
-make -C loader clean >/dev/null
-make -C loader
-
-echo "== assemble ESP =="
+# The build + ESP assembly is one pipeline shared with the KVM dev
+# loop (tools/vm-test/run-vm.sh): tools/qemu-proof/build-esp.sh.
+# Never grow a second copy of it here — the two harnesses must boot
+# the same image, so they build it in exactly one place.
+"$ROOT/tools/qemu-proof/build-esp.sh"
 ESP="$ROOT/tools/qemu-proof/esp.img"
-rm -f "$ESP"
-dd if=/dev/zero of="$ESP" bs=1M count=64 status=none
-mkfs.fat -F 32 "$ESP" >/dev/null
-mmd -i "$ESP" ::/EFI
-mmd -i "$ESP" ::/EFI/BOOT
-mmd -i "$ESP" ::/EFI/SystemZ
-mcopy -i "$ESP" loader/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-mcopy -i "$ESP" "$ZCORE_ELF" ::/EFI/SystemZ/zcore.elf
 
 echo "== boot under QEMU/OVMF =="
 if [ -z "${OVMF_CODE:-}" ]; then
