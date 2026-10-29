@@ -130,3 +130,32 @@ the existence of code alone.
   (see the stage report). Guest birth still NOT proven; the next
   run — the first with a guest state that passes the audit
   end-to-end — is the witness.
+- `vm-serial-2026-10-29-run5.log` — that run (same harness, same
+  machine, the seg_ar-fixed build). The fixed build is what ran:
+  guest RIP moved to 0x205f40 (run 4: 0x205f70), exactly the
+  seg_ar fix's code-size delta — the corrected assembly removed
+  16 instructions upstream of the guest page. All 87 field writes
+  land, the control read-back is exact, VMLAUNCH is attempted —
+  and the first exit is **reason 33 again**, guest RIP unmoved,
+  guest RAX still holding the sentinel: zero guest instructions
+  executed. So the audit's three convictions were real but not
+  sufficient: at least one more check in the invalid-guest-state
+  class refuses the state, and a static audit — which judges the
+  values the code INTENDS to write — has no further purchase on
+  which. The next build therefore changes evidence class: before
+  any launch, ZCore reads the filled VMCS back and prints the
+  state AS STORED (every guest field, the control block, the
+  MSR counts; each segment's access rights decoded bit by bit;
+  guest CS judged against the canonical 0xA09B itself, so a wrong
+  intent faithfully stored cannot pass in silence), and after a
+  failed entry it prints the exit qualification and interruption
+  information while the exit record still exists. If the mirror
+  is refused again, the same boot bisects: teardown, VMX
+  re-entry, and a second launch of the same 7-byte program on a
+  hand-built canonical guest state (ZCore's own freshly built
+  GDT and TSS, a constant segment block, the shared CR/EFER/
+  control block untouched), with a stored-vs-stored diff of the
+  two dumps printed between them — a canonical entry convicts
+  the mirror field the diff names; a second refusal confines the
+  hunt to the block both states share. Guest birth still NOT
+  proven; the rerun is the witness.
