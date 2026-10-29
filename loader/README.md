@@ -19,11 +19,18 @@ ELF entry.
 under QEMU/OVMF — loader → ZCore ELF → ZCore's serial banner and CPUID
 verdict. That is an *architecture* proof (SPEC.md §18).
 
+The loader also builds the **boot manifest** (`zboot.h` — the C ABI
+header ZCore mirrors): at a fixed address it leaves the UEFI memory
+map as it stood at ExitBootServices, the ACPI RSDP address found in
+the firmware's configuration table, and ZCore's placement facts, and
+passes the manifest address to ZCore's entry in RDI. ZCore verifies
+the magic before trusting a byte of it.
+
 **Not yet true, stated plainly:** no boot on physical hardware yet
 (that is M1's exit proof and it is still owed); no generation seals,
-no TPM measurement, no trial generations, no boot manifest hand-off.
-Secure Boot signing with operator keys is future work — OVMF in the
-proof harness runs unsigned.
+no TPM measurement, no trial generations. Secure Boot signing with
+operator keys is future work — OVMF in the proof harness runs
+unsigned.
 
 ## Build
 

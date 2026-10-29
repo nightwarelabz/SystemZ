@@ -58,9 +58,10 @@ rm -rf "$WORK"
 
 echo "== serial log =="
 cat "$SERIAL_LOG" || true
-if grep -q "SystemZ ZCore" "$SERIAL_LOG" && grep -q "verdict:" "$SERIAL_LOG"; then
-  echo "QEMU PROOF: PASS — ZCore banner + verdict on serial"
+if grep -q "SystemZ ZCore" "$SERIAL_LOG" && grep -q "verdict:" "$SERIAL_LOG" \
+   && grep -q "zboot: memory map:" "$SERIAL_LOG"; then
+  echo "QEMU PROOF: PASS — ZCore banner, verdict, and boot-manifest memory map on serial"
 else
-  echo "QEMU PROOF: FAIL — ZCore banner not seen on serial" >&2
+  echo "QEMU PROOF: FAIL — expected ZCore evidence not seen on serial" >&2
   exit 1
 fi

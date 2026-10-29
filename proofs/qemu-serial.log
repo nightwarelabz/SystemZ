@@ -2,9 +2,9 @@
 BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
 
 SystemZ loader â M1
-loader: zcore.elf read, bytes=0x0000000000002988
+loader: zcore.elf read, bytes=0x0000000000003460
 loader: segment placed at 0x0000000000200000
-loader: segment placed at 0x0000000000201030
+loader: segment placed at 0x00000000002016f0
 loader: entry=0x0000000000200000 â exiting boot services
 
 SystemZ ZCore — M1 skeleton
@@ -14,4 +14,9 @@ vmx (intel): false
 svm (amd):   true
 already virtualized: true
 verdict: hardware virtualization present — ZCore can grow here
+svm: revision 0x1, asids 16
+svm: VM_CR = 0x0 (svmdis 0)
+zboot: manifest v1 ok — map at 0x101000, 6288 bytes, desc 48 bytes
+zboot: acpi rsdp: 0xfb7e014
+zboot: memory map: 131 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
 zcore: halting (skeleton ends here, on purpose)

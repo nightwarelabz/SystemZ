@@ -154,6 +154,14 @@ typedef struct {
 #define EFI_OPEN_PROTOCOL_GET_PROTOCOL 0x00000002
 
 typedef struct {
+    efi_guid vendor_guid;
+    void *vendor_table;
+} efi_configuration_table;
+
+static const efi_guid EFI_ACPI_20_TABLE_GUID =
+    { 0x8868E871, 0xE4F1, 0x11D3, { 0xBC, 0x22, 0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81 } };
+
+typedef struct {
     efi_table_header hdr;
     const efi_char16 *firmware_vendor;
     uint32_t firmware_revision;
@@ -165,6 +173,8 @@ typedef struct {
     efi_simple_text_output *std_err;
     void *runtime_services;
     efi_boot_services *boot_services;
+    uint64_t number_of_table_entries;
+    efi_configuration_table *configuration_table;
 } efi_system_table;
 
 #endif
