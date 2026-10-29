@@ -20,15 +20,31 @@ under QEMU/OVMF — loader → ZCore ELF → ZCore's serial banner and CPUID
 verdict. That is an *architecture* proof (SPEC.md §18).
 
 The loader also builds the **boot manifest** (`zboot.h` — the C ABI
-header ZCore mirrors): at a fixed address it leaves the UEFI memory
-map as it stood at ExitBootServices, the ACPI RSDP address found in
-the firmware's configuration table, and ZCore's placement facts, and
-passes the manifest address to ZCore's entry in RDI. ZCore verifies
-the magic before trusting a byte of it.
+header ZCore mirrors): on pages firmware grants it (AllocateAnyPages
+— there is no fixed address) it leaves the UEFI memory map as it
+stood at ExitBootServices, the ACPI RSDP address found in the
+firmware's configuration table, and ZCore's placement facts, and
+passes the manifest address to ZCore's entry in RDI. The RDI pointer
+is the only address contract. ZCore verifies the magic before
+trusting a byte of it.
 
-**Not yet true, stated plainly:** no boot on physical hardware yet
-(that is M1's exit proof and it is still owed); no generation seals,
-no TPM measurement, no trial generations. Secure Boot signing with
+**First physical boot (2026-10-29).** The ESP image was written to a
+USB stick and booted on an HP EliteDesk 800 G1. The loader ran on
+the real firmware: it read `zcore.elf` (0x8e80 bytes) and placed all
+four segments at their linked addresses (0x200000, 0x205048,
+0x206990, 0x207000). It then failed at the boot manifest, which at
+the time was demanded at a fixed 0x100000 with AllocateAddress:
+HP's firmware answered `EFI_NOT_FOUND` (status
+0x800000000000000e) — the 1 MiB range is not free there — and the
+loader halted. **ZCore has still never entered on physical
+hardware**, and M1's exit proof is still owed. The fix is what this
+section now describes (anywhere-allocation + RDI hand-off); the
+QEMU harness passes with it, OVMF granting the manifest at a high
+address which ZCore consumes from the pointer. A hardware re-test
+is the next proof owed.
+
+**Not yet true, stated plainly:** no generation seals, no TPM
+measurement, no trial generations. Secure Boot signing with
 operator keys is future work — OVMF in the proof harness runs
 unsigned.
 

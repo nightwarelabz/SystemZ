@@ -8,6 +8,7 @@ loader: segment placed at 0x0000000000205048
 loader: segment placed at 0x0000000000206990
 loader: segment placed at 0x0000000000207000
 loader: entry=0x0000000000200000 â exiting boot services
+loader: boot manifest at 0x000000000e184000
 
 SystemZ ZCore — M1 skeleton
 cpu vendor: AuthenticAMD
@@ -18,11 +19,11 @@ already virtualized: true
 verdict: hardware virtualization present — ZCore can grow here
 svm: revision 0x1, asids 16
 svm: VM_CR = 0x0 (svmdis 0)
-zboot: manifest v1 ok — map at 0x101000, 6288 bytes, desc 48 bytes
+zboot: manifest v1 ok — map at 0xe185000, 6384 bytes, desc 48 bytes
 zboot: acpi rsdp: 0xfb7e014
-zboot: memory map: 131 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
+zboot: memory map: 133 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
 npt: groundwork — building nested page tables for the first guest (tables only; NOT wired into the VMCB)
-npt: window [0, 0x10000000) from 127 RAM descriptors (rule: highest RAM-descriptor end, 2 MiB aligned)
+npt: window [0, 0x10000000) from 129 RAM descriptors (rule: highest RAM-descriptor end, 2 MiB aligned)
 npt: tables: root 0x2d1000 — pml4 1 page, pdpt 1 page, pd 1 pages, pt 10 of 128 pool pages (13 table pages total)
 npt: map: 118 large pages (2 MiB) + 4896 small pages (4 KiB) = 255 MiB mapped of the 256 MiB window; holes (reserved/MMIO) stay not-present
 npt: self-check PASS — 65312 RAM pages expected by the rule, 65312 page-equivalents found in the tables, 5014 present leaves, 0 mismatches
