@@ -1663,7 +1663,35 @@ fn vmx_first_guest(manifest_addr: u64) {
         guest_efer: efer_now & 0x901,
         guest_cr0: orig_cr0,
         guest_cr3: orig_cr3,
-        guest_cr4: orig_cr4 & !(1 << 13), // a guest does not hold VMXE
+        // Guest CR4: the live CR4, read at this site — the CPU
+        // is in VMX operation here (VMXON above), so the read
+        // IS the post-VMXON value, CR4.VMXE (bit 13) standing.
+        // It was NOT always sourced so. The construction used
+        // to be `orig_cr4 & !(1 << 13)` under the doctrine "a
+        // guest does not hold VMXE" — plausible, and convicted
+        // by run 10 as the sole cause of the entry refusals
+        // that consumed runs 1–9. The decomposition is exact
+        // (witness: proofs/vm-serial-2026-10-29-run10.log):
+        // rung Y2 flew the guest CRs read live, unedited, and
+        // the guest was BORN — exit #1 CPUID (emulated by
+        // ZCore: rax=0xd, rbx=0x756e6547), exit #2 HLT — where
+        // its two CR patches decompose to guest CR0
+        // 0x80010033 -> 0x80010033 (identity: the mirror's CR0
+        // was already the raw value) and guest CR4 0x668 ->
+        // 0x2668, VMXE standing, the SOLE effective delta; the
+        // CR4 read shadow followed identically, because the
+        // fill writes the shadow from this same field. Rung
+        // Y1 in the same boot — the guest under ZCore's own
+        // page tables — was refused identically, so CR3's
+        // provenance stands exonerated beside its values: the
+        // refusal never lived in whose tables CR3 names. It
+        // lived in this one cleared bit: on this stack an L2
+        // whose CR4 lacks VMXE is refused at entry (reason
+        // 33), every time. VMXE therefore stands in the guest
+        // CR4 from now on, sourced live rather than clipped —
+        // and a guest that later wants VMX operation of its
+        // own starts from here.
+        guest_cr4: read_cr(4),
         cs, ss, ds, es, fs, gs, tr, ldtr,
         gdt_base, gdt_limit, idt_base, idt_limit,
         dr7,

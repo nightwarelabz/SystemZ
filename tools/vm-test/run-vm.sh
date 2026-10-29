@@ -278,7 +278,17 @@ BIRTH=""
 SHOW_TAIL=0
 if grep -q 'vmx: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
-  if grep -q 'born on ladder rung X1' "$LOG"; then
+  if grep -q 'born on the mirror state' "$LOG"; then
+    # Born on the mirror itself — the production path, no rung
+    # involved. Since the round-11 fix, the mirror's guest CR4
+    # is sourced from the live CR4 read (VMXE standing — run
+    # 10's Y2 conviction carried into the construction site),
+    # so the state ZCore flies FIRST is the born state. This
+    # is the headline case and must precede every rung branch;
+    # the rung branches below remain for the record, for any
+    # future log where the mirror is refused and a rung enters.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on the mirror state') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on ladder rung X1' "$LOG"; then
     # Born on the reference-state rung: the state that entered
     # differs from the refused mirror by exactly the seven
     # deltas to kvm-unit-tests' VMCS recipe (its vmx suite

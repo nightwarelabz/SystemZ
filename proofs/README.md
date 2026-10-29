@@ -311,3 +311,53 @@ the existence of code alone.
   both refuse, the last unvaried family is the entry
   mechanics themselves — the launch bridge and the
   VMCS-region handling. Guest birth still NOT proven.
+- `vm-serial-2026-10-29-run10.log` — the structure run
+  (same harness, same machine; the two structure rungs
+  flown immediately after the mirror, ahead of X1 and the
+  ladders, which therefore never ran). **GUEST BORN —
+  guest birth PROVEN in VM, the first birth in ten
+  runs.** The mirror refused at entry (reason 33), as it
+  had in every run. **Y1 refused identically**: the
+  guest flew under ZCore's OWN page tables — guest CR3
+  := the groundwork root 0x2dd000, audited in the log
+  before launch (root's low bits clean; the code and
+  stack pages walked present at every level, identity
+  leaves; NX standing on the walk, so the host-true
+  EFER 0xd00 was paired with the CR3 patch) — and was
+  refused at entry, reason 33, exactly as under the
+  firmware's tables. CR3's provenance stands exonerated
+  beside its values: the refusal never lived in whose
+  tables CR3 names. **Y2 entered.** Its patches flew the
+  guest CRs as the host's live post-VMXON reads,
+  unedited, the read shadows patched identically — and
+  they decompose the cause completely: guest CR0
+  0x80010033 -> 0x80010033 (identity — the mirror's CR0
+  was already the raw value) and **guest CR4 0x668 ->
+  0x2668: CR4.VMXE (bit 13) standing, the sole effective
+  delta**. Exit #1 was reason 10 (CPUID; ZCore emulated
+  it — rax=0xd, rbx=0x756e6547), exit #2 reason 12
+  (HLT), then the born line (`born on ladder rung Y2
+  (raw host CRs)`) and `vmx: GUEST BORN`; the harness
+  verdict read **guest birth: PROVEN in VM**. Ten runs,
+  one bit: the mirror's world-build deliberately
+  cleared VMXE from the guest CR4 (`orig_cr4 & !(1 <<
+  13)`, under the doctrine "a guest does not hold
+  VMXE"), and every refused state in runs 1–9, in X1,
+  and in this run's mirror and Y1 carried that clear.
+  On this stack an L2 whose CR4 lacks VMXE is refused
+  at entry, reason 33, every time. The PR carrying this
+  entry makes the fix permanent at the construction
+  site: the guest CR4 is now sourced from the live CR4
+  read there (post-VMXON, VMXE standing), the CR4 read
+  shadow following it (the fill writes the shadow from
+  the same field, as before), with the conviction
+  documented at the site. The mirror attempt is now the
+  born path; every ladder rung (R1–R4, H1–H5, X1, Y1,
+  Y2) remains in code behind it, and the harness
+  verdict's headline case is the mirror's own born
+  line. The proof class is unchanged — a birth under
+  nested VMX on this machine's KVM: bare metal remains
+  the final witness (SPEC.md §18/§21), and it now tests
+  a BORN configuration. The SVM twin's birth remains
+  unproven: TCG's VMRUN is a no-op and no AMD/KVM
+  witness exists yet.
