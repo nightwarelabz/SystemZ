@@ -1,8 +1,8 @@
 # M0 census tool
 
 `m0-census.sh` is read-only: it modifies nothing, installs nothing, and
-touches no network. Run it on the target machine (the EliteDesk 800 G1
-witness box) under any ordinary Linux:
+touches no network. Run it on any physical x86_64 machine under any
+ordinary Linux:
 
 ```sh
 bash m0-census.sh
