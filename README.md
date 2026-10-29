@@ -20,8 +20,12 @@ every state claim in this repo is proven or labelled unproven.
 ## The shape
 
 - **ZCore** — a microhypervisor in Rust (`no_std`, zero external
-  dependencies): vCPU scheduling, EPT/NPT memory isolation, interrupt
-  routing, inter-domain messaging. Four jobs, nothing else.
+  dependencies), with C at the key seams — the loader/firmware path,
+  the brick ABI, CPU plumbing, driver class interfaces — for maximum
+  capability and universality: vCPU scheduling, EPT/NPT memory
+  isolation, interrupt routing, inter-domain messaging. Four jobs,
+  nothing else. Every brick interface is a C header, so bricks can be
+  written in any language.
 - **Domains** — admin, network, firewall, update, and developer project
   domains, each isolated, each talking over the ZBus, each replaceable.
 - **Bricks** — every component is a signed, content-hashed, versioned

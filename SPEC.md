@@ -74,10 +74,34 @@ all of it ours:
 | Recursion as a native idea (the OS inside the OS) | Blacksite OS / orc | SystemZ domains can host SystemZ: a full SystemZ instance is a legal brick inside a domain |
 | PR-first, whole-census repair, verify-in-the-served-artifact | House workflow doctrine | How SystemZ itself is developed (§18) |
 
-**Language ruling:** the hypervisor core and domain kernels are **Rust,
-`no_std`, zero external dependencies** — the phase1 discipline. Tooling
-that must be fast follows the same rule. Convenience tooling may relax it
-only above the admin line, never inside the trusted core.
+**Language doctrine — Rust and C, each where it is strongest**
+(Chase's amendment, 2026-10-28: *C for key areas, for maximum capability
+and universality*):
+
+- **Rust** (`no_std`, zero external dependencies — the phase1 discipline)
+  is the default for ZCore's logic, the domain kernels, the solver, and
+  everything where memory safety is the security boundary.
+- **C** (freestanding, our own headers, no libc in the trusted core) is
+  the language of the **key areas where universality is the point**:
+  1. **The loader and firmware interop** — UEFI speaks C; the boot path
+     meets the machine in its native tongue, with no translation layer.
+  2. **The brick ABI** — every brick interface (ZBus channels, driver
+     classes, capability calls) is defined by a C header. A brick may be
+     written in any language that can speak the C ABI — which is every
+     language — so the Lego system is never fenced to one toolchain.
+  3. **CPU plumbing** — the thinnest VMX/SVM setup, page-table, and
+     interrupt-entry code where direct control of the machine text is
+     the capability itself, kept small enough to audit line by line.
+  4. **Driver class interfaces** — defined in C headers so a class
+     driver (§17) is portable across every domain that hosts it.
+- **Assembly** exists only inside those C/Rust modules, at the exact
+  instructions the architecture demands, never as free-standing files
+  nobody can audit.
+- The boundary rule: C areas are kept *small, flat, and audited*; Rust
+  carries the complexity. Zero external dependencies binds both —
+  in the trusted core, the whole supply chain is this repo, in either
+  language. Convenience tooling may relax dependency discipline only
+  above the admin line, never inside the trusted core.
 
 ## 3. Architecture at a glance
 
@@ -93,7 +117,7 @@ only above the admin line, never inside the trusted core.
 │  ADMIN DOMAIN (ZAdmin)  system description · generations · │
 │                         brick store · capability grants    │
 ├────────────────────────────────────────────────────────────┤
-│  ZCore — microhypervisor (Rust, no_std)                    │
+│  ZCore — microhypervisor (Rust core, C at the seams, §2)   │
 │  vCPU scheduling · EPT/NPT isolation · interrupt routing · │
 │  ZBus inter-domain messaging · timers · IOMMU control      │
 ├────────────────────────────────────────────────────────────┤
@@ -580,7 +604,7 @@ measured and then defended, not a promise made here.
 SystemZ/
   SPEC.md            this document
   README.md
-  zcore/             the microhypervisor (Rust, no_std)
+  zcore/             the microhypervisor (Rust core, C seams)
   loader/            our UEFI boot loader
   zadmin/            admin domain: solver, generations, zadm
   domains/           standing domains (sys-net, sys-firewall,
