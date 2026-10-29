@@ -224,7 +224,8 @@ configuration, profiles, even whole domains definitions.
 ## 7. Recursive dynamism — descriptions, the solver, generations
 
 **The system description** is a single declarative document (our own
-format; human-writable, machine-diffable) naming: hardware profile,
+format; human-writable, machine-diffable) naming: hardware capabilities
+(as discovered at runtime, §17),
 domains and their bricks, capability grants, network policy, EMCON
 defaults, performance budgets, and operator preferences. It is the
 machine, written down.
@@ -404,7 +405,7 @@ processes may ignore.
 Networking is a core duty of the minimal system, and it is ours end to
 end above the wire:
 
-- **Drivers.** From-scratch drivers for the target NIC classes (§16),
+- **Drivers.** From-scratch drivers by NIC device class (§17),
   owned by sys-net, DMA-confined by the IOMMU.
 - **Stack.** Our own implementation, staged: Ethernet/ARP, IPv4 then
   IPv6, ICMP, UDP, TCP, DHCP, DNS — each protocol a separately testable
@@ -508,21 +509,33 @@ compositor that does not yet exist. GPU passthrough to lab/dev domains
 (for compute and foreign desktops) is a ZCore/IOMMU matter and does not
 wait for C35.
 
-## 17. Hardware — x86_64, depth over breadth
+## 17. Hardware — one x86_64 logic, every machine
 
-- **Required:** 64-bit x86 CPU with hardware virtualization (Intel
-  VT-x with EPT, or AMD-V with NPT) and an IOMMU (VT-d / AMD-Vi) for
-  device confinement and passthrough. TPM 2.0 strongly preferred;
-  measured boot degrades honestly (and says so) without one.
-- **First witness class:** the HP EliteDesk 800 G1 — the house
-  development machine. Its exact CPU/chipset IOMMU capability is a
-  to-be-verified item (M0), not an assumption in this spec.
-- **Driver doctrine:** depth over breadth. A short list of hardware
-  profiles, each fully owned: chipset, storage (AHCI/NVMe class), NIC
-  class, USB host class, console. A machine outside the profile list is
-  "unproven" and the installer says so before, not after.
-- **Expansion:** every new hardware profile arrives as driver bricks +
-  a profile brick, proven on the physical machine it names (§18).
+SystemZ is built **from the x86_64 architecture itself**: the same logic
+runs on all machines. There are no per-model targets. A specific machine
+(Chase's EliteDesk 800 G1 included) is only ever a *witness* — a place a
+universal claim gets proven — never a profile the system is built for.
+
+- **Required by the architecture:** a 64-bit x86 CPU with hardware
+  virtualization (Intel VT-x with EPT, or AMD-V with NPT) and an IOMMU
+  (VT-d / AMD-Vi) for device confinement and passthrough. TPM 2.0
+  strongly preferred; measured boot degrades honestly (and says so)
+  without one.
+- **Discovery, not assumption.** Everything machine-specific is read
+  from the machine at runtime, through the architecture's own doors:
+  CPUID leaves and MSRs for the processor, ACPI tables for the board's
+  wiring, PCI/PCIe enumeration for devices, UEFI for firmware services.
+  Code asks the architecture; it never carries a table of models.
+- **Drivers are by device class, never by machine.** Storage speaks
+  AHCI or NVMe, USB speaks xHCI, network speaks its controller class —
+  the published interface standards, implemented once, valid wherever
+  that class appears. A device whose class SystemZ has no driver brick
+  for is reported honestly as unsupported; the remedy is a new class
+  driver brick (§6), not a machine profile.
+- **One honest gate.** A machine that fails the architectural
+  requirements (no EPT/NPT, no IOMMU) cannot host SystemZ, and the
+  loader says so, naming the missing capability — on any machine, by
+  the same check, with the same words.
 
 ## 18. How SystemZ is built — development doctrine
 
@@ -558,7 +571,7 @@ wait for C35.
 8. The flight recorder for the boot is sealed into the audit ledger.
 
 Target: the minimal core (through step 6, Bare profile) boots in
-**single-digit seconds** on the witness machine — a budget to be
+**single-digit seconds** on reference hardware — a budget to be
 measured and then defended, not a promise made here.
 
 ## 20. Repository layout (proposed)
@@ -582,12 +595,14 @@ SystemZ/
 
 ## 21. Milestones — each with an exit proof
 
-- **M0 — Ground truth.** Verify the witness machine (CPU, EPT, IOMMU,
-  TPM) on the physical hardware; toolchain pinned; repo seeded with this
-  spec. *Exit: a written hardware census, signed off as read from the
-  machine itself.*
+- **M0 — Ground truth.** Prove the architectural gate (§17) on real
+  hardware: census a physical x86_64 machine (CPU, EPT/NPT, IOMMU, TPM)
+  with the census tool; toolchain pinned; repo seeded with this spec.
+  Any qualifying machine serves — the census proves the *architecture's*
+  requirements, not a model's. *Exit: a written hardware census, signed
+  off as read from the machine itself.*
 - **M1 — First boot.** Our loader → ZCore → one domain running our code,
-  on the witness machine, from a cold power-on. *Exit: flight-recorder
+  on real x86_64 hardware, from a cold power-on. *Exit: flight-recorder
   log + a witness run, repeated.*
 - **M2 — Two rooms and a wall.** Two domains, isolated memory, ZBus
   channel between them, admin shell killing/restarting either. *Exit:
@@ -620,8 +635,10 @@ its exit proof, recorded in `proofs/`.
 - Not Windows/macOS application compatible except inside guest domains.
 - Not a server product claim: it can serve, but its design centre is a
   developer's own machine.
-- From-scratch drivers mean the supported-hardware list starts short.
-  That is the price of owning the stack, and it is paid openly.
+- From-scratch drivers mean the device-*class* coverage list starts
+  short (AHCI/NVMe, xHCI, the first NIC classes). Any machine carrying
+  those classes is in scope; coverage grows class by class. That is the
+  price of owning the stack, and it is paid openly.
 - A from-scratch hypervisor is a multi-year-class undertaking in the
   large. These milestones are ordered so that every stage is a real,
   bootable, provable machine — the spectrum is full, the path is
@@ -633,10 +650,11 @@ its exit proof, recorded in `proofs/`.
    snoot/C35; unrecorded for SystemZ at spec time).
 2. **Description format** — evolve phase1's registry/config idioms, or a
    fresh minimal format designed for diffing.
-3. **Second hardware profile** after the EliteDesk class — which machine
-   family earns drivers second.
+3. **Device-class order** — after the first storage/USB/NIC classes,
+   which device class earns a driver brick next (§17: classes, never
+   machine models).
 4. **Guest priority** — whether M8 guests matter before or after wider
-   driver coverage.
+   device-class coverage.
 
 ---
 

@@ -31,7 +31,11 @@ every state claim in this repo is proven or labelled unproven.
   Updates are atomic new generations with trial boot and automatic
   rollback.
 
-## First target
+## Target: the x86_64 architecture
 
-x86_64 with VT-x/EPT (or AMD-V/NPT) and an IOMMU (VT-d / AMD-Vi).
-First witness machine class: HP EliteDesk 800 G1.
+One logic, every machine: x86_64 with VT-x/EPT (or AMD-V/NPT) and an
+IOMMU (VT-d / AMD-Vi). No per-model targets — hardware is discovered at
+runtime (CPUID, ACPI, PCI enumeration) and drivers are written by
+device class (AHCI/NVMe, xHCI, NIC classes), never for a machine model.
+Any specific computer is only a witness where universal claims get
+proven.
