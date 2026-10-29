@@ -44,6 +44,12 @@ implemented. Unsupported hardware, failed guests and unproven guest entry
 are identified. This PR implements presentation and the existing boot-chain
 handoff, not the rest of the operating system.
 
+The integration preserves the NPT groundwork and Intel VMX twin from
+`main`. Both SVM and VMX return their existing outcome to the diagnostic
+view, including failure, incomplete execution and entry not claimed; their
+execution and teardown decisions are unchanged. The boot witness also
+requires the upstream NPT self-check and VMX readiness record.
+
 ## Firmware and ABI
 
 GOP RGBX, BGRX and disjoint eight-bit channel masks are supported. The

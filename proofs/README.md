@@ -12,9 +12,14 @@ the existence of code alone.
   qualifying machine serves (SPEC.md §17): the census proves the
   architecture's requirements, not a machine model.
 - `qemu-serial.log` — the full boot chain under QEMU/OVMF (our
-  loader → ZCore ELF → banner, verdict, boot-manifest report, SVM
-  attempt), produced by `tools/qemu-proof/run.sh`. Architecture proof
-  only — M1's exit proof remains a cold boot on physical hardware.
-  The SVM guest birth is explicitly NOT claimed in this log: QEMU
-  TCG's VMRUN does not enter (see zcore/README.md).
+  loader → ZCore ELF → banner, verdict, boot-manifest report, NPT
+  build + self-check census, SVM attempt, VMX readiness block),
+  produced by `tools/qemu-proof/run.sh`. The harness FAILs unless
+  the NPT self-check prints PASS and the VMX readiness block
+  appears. Architecture proof only — M1's exit proof remains a
+  cold boot on physical hardware. The SVM guest birth is
+  explicitly NOT claimed in this log: QEMU TCG's VMRUN does not
+  enter, and its emulated CPU offers no VMX at all (see
+  zcore/README.md). On hardware, this log's successors are where
+  the NPT wiring and both births get proven.
 

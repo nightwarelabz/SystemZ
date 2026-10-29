@@ -127,6 +127,10 @@ def witness(case):
                         assert 'SystemZ ZCore' in text
                         assert 'zboot: memory map:' in text
                         assert 'verdict:' in text
+                        if 'svm (amd):   true' in text:
+                            assert 'npt: self-check PASS' in text, 'upstream NPT census regressed'
+                            assert 'GUEST BORN' in text or 'guest birth NOT CLAIMED' in text
+                        assert 'vmx: readiness' in text, 'upstream VMX readiness report lost'
                     if case == 'normal':
                         assert 'zboot: framebuffer accepted' in text
                     if case == 'no-graphics':
