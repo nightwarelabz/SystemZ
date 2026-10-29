@@ -154,6 +154,21 @@ if [ "$BUILD" -eq 1 ]; then
   else
     ok "build tools present (cargo, make, mkfs.fat, mtools)"
   fi
+  # Cargo's presence does not prove zcore's build target is
+  # installed — the first G1 run (2026-10-29) passed the tools check
+  # and then died in the build with E0463 (can't find crate for
+  # `core`). Check the target itself, here, where the fix is cheap.
+  if command -v rustup >/dev/null 2>&1; then
+    if rustup target list --installed 2>/dev/null | grep -qx 'x86_64-unknown-none'; then
+      ok "rustup target x86_64-unknown-none installed (zcore's build target)"
+    else
+      problem "rustup target x86_64-unknown-none not installed — zcore cannot build without it" \
+        "rustup target add x86_64-unknown-none"
+    fi
+  else
+    warn "rustup not found — the x86_64-unknown-none target cannot be verified here; if the build fails with E0463, that target is what is missing" \
+      "install Rust via rustup (https://rustup.rs), then: rustup target add x86_64-unknown-none"
+  fi
 else
   if [ -f "$ESP" ]; then
     ok "--no-build: reusing existing ESP image $ESP"
@@ -172,7 +187,10 @@ fi
 # Build (the shared pipeline — the same image the TCG proof boots)
 # ------------------------------------------------------------------
 if [ "$BUILD" -eq 1 ]; then
-  "$ROOT/tools/qemu-proof/build-esp.sh"
+  # Via bash, never direct exec: the git tree does not preserve the
+  # exec bit on these scripts (first G1 run, 2026-10-29: Permission
+  # denied after an otherwise-green preflight).
+  bash "$ROOT/tools/qemu-proof/build-esp.sh"
 fi
 
 # ------------------------------------------------------------------
@@ -231,7 +249,17 @@ if [ -n "$(line 'SystemZ ZCore')" ]; then echo "zcore:       banner seen — ZCo
 MANIFEST_LINE="$(line 'zboot: memory map:')"
 [ -n "$MANIFEST_LINE" ] && echo "manifest:    $MANIFEST_LINE"
 NPT_LINE="$(line 'npt: self-check')"
-if [ -n "$NPT_LINE" ]; then echo "npt:         $NPT_LINE"; else echo "npt:         self-check line NOT SEEN"; fi
+NPT_NA_LINE="$(line 'npt: not applicable')"
+if [ -n "$NPT_LINE" ]; then
+  echo "npt:         $NPT_LINE"
+elif [ -n "$NPT_NA_LINE" ]; then
+  # Intel path: the NPT block is AMD-only, and ZCore says so in the
+  # log itself. Absence of the self-check there is by design, never
+  # a failure — but only when this line stands in its place.
+  echo "npt:         not applicable on this path — $NPT_NA_LINE"
+else
+  echo "npt:         MISSING — no self-check line and no not-applicable line in the log"
+fi
 VMX_READY_LINE="$(line 'vmx: readiness:')"
 if [ -n "$VMX_READY_LINE" ]; then echo "vmx ready:   $VMX_READY_LINE"; else echo "vmx ready:   readiness line NOT SEEN"; fi
 [ -n "$(line 'vmx: VMLAUNCH #1')" ] && echo "vmx entry:   VMLAUNCH was attempted"
@@ -249,6 +277,8 @@ elif grep -q 'svm: GUEST BORN' "$LOG"; then
 elif grep -q 'vmx: guest birth NOT CLAIMED' "$LOG"; then
   BIRTH="NOT proven"
   BIRTH_WHY="ZCore's no-entry detection fired under KVM: VMLAUNCH returned without the guest executing. That is REAL evidence, not an environment excuse — file the log, do not tune around it silently. ($(line 'vmx: guest birth NOT CLAIMED'))"
+elif [ -n "$(line 'VMCS field writes FAILED')" ]; then
+  BIRTH="NOT proven"; BIRTH_WHY="VMCS setup was rejected before any launch: $(line 'VMCS field writes FAILED') — every failing field is named in the log above that line, with the first failure's VM-instruction error; file the log, do not guess."
 elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
   BIRTH="NOT proven"; BIRTH_WHY="first VMX exit was wrong: $(line 'vmx: guest birth FAILED')"
 elif [ -n "$(line 'vmx: guest birth incomplete')" ]; then

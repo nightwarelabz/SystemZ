@@ -2,13 +2,13 @@
 BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
 
 SystemZ loader â M1
-loader: zcore.elf read, bytes=0x0000000000008e80
+loader: zcore.elf read, bytes=0x000000000000af08
 loader: segment placed at 0x0000000000200000
-loader: segment placed at 0x0000000000205048
-loader: segment placed at 0x0000000000206990
-loader: segment placed at 0x0000000000207000
+loader: segment placed at 0x0000000000205a18
+loader: segment placed at 0x00000000002082f8
+loader: segment placed at 0x0000000000209000
 loader: entry=0x0000000000200000 â exiting boot services
-loader: boot manifest at 0x000000000e184000
+loader: boot manifest at 0x000000000e176000
 
 SystemZ ZCore — M1 skeleton
 cpu vendor: AuthenticAMD
@@ -19,19 +19,19 @@ already virtualized: true
 verdict: hardware virtualization present — ZCore can grow here
 svm: revision 0x1, asids 16
 svm: VM_CR = 0x0 (svmdis 0)
-zboot: manifest v1 ok — map at 0xe185000, 6384 bytes, desc 48 bytes
+zboot: manifest v1 ok — map at 0xe177000, 6240 bytes, desc 48 bytes
 zboot: acpi rsdp: 0xfb7e014
-zboot: memory map: 133 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
+zboot: memory map: 130 descriptors, conventional (free) 209 MiB, described span 12803 MiB of address space
 npt: groundwork — building nested page tables for the first guest (tables only; NOT wired into the VMCB)
-npt: window [0, 0x10000000) from 129 RAM descriptors (rule: highest RAM-descriptor end, 2 MiB aligned)
-npt: tables: root 0x2d1000 — pml4 1 page, pdpt 1 page, pd 1 pages, pt 10 of 128 pool pages (13 table pages total)
+npt: window [0, 0x10000000) from 126 RAM descriptors (rule: highest RAM-descriptor end, 2 MiB aligned)
+npt: tables: root 0x2d3000 — pml4 1 page, pdpt 1 page, pd 1 pages, pt 10 of 128 pool pages (13 table pages total)
 npt: map: 118 large pages (2 MiB) + 4896 small pages (4 KiB) = 255 MiB mapped of the 256 MiB window; holes (reserved/MMIO) stay not-present
 npt: self-check PASS — 65312 RAM pages expected by the rule, 65312 page-equivalents found in the tables, 5014 present leaves, 0 mismatches
-npt: root 0x2d1000 is the nCR3 candidate — NOT wired: VMCB NP_ENABLE stays 0 and nCR3 is never written this round; wiring belongs to the birth proof on real hardware
+npt: root 0x2d3000 is the nCR3 candidate — NOT wired: VMCB NP_ENABLE stays 0 and nCR3 is never written this round; wiring belongs to the birth proof on real hardware
 svm: enabling SVM (EFER.SVME + host save area)...
-svm: vmcb 0x20e000 hsave 0x20f000 intercepts readback 0x1040000 host efer 0x1d00
-svm: VMRUN #1 — guest enters at 0x205088
-svm: exit #1 code 0x0 (cpuid=0x72, hlt=0x78) info1 0x0 info2 0x0 guest rip 0x205088
+svm: vmcb 0x210000 hsave 0x211000 intercepts readback 0x1040000 host efer 0x1d00
+svm: VMRUN #1 — guest enters at 0x205f80
+svm: exit #1 code 0x0 (cpuid=0x72, hlt=0x78) info1 0x0 info2 0x0 guest rip 0x205f80
 svm: guest birth NOT CLAIMED here — VMRUN did not enter in this environment (emulated VMRUN is a no-op); the machinery is complete and awaits a capable host
 vmx: readiness: CPUID leaf 1 reports NO VMX on this host (measured) — VMXON, VMCS and entry not attempted; the Intel twin path is built and awaits Intel hardware (or a KVM host on Intel)
 zcore: halting (skeleton ends here, on purpose)

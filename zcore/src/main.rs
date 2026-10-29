@@ -1139,6 +1139,107 @@ mod vf {
     // the launch bridge writes them, in asm, and owns the encodings.
 }
 
+/// Human name for a VMCS field encoding — so a failed write names
+/// its field on the serial line, not just a bare hex number the
+/// reader has to decode against Appendix B from memory.
+fn vf_name(field: u64) -> &'static str {
+    use vf::*;
+    match field {
+        G_ES_SEL => "guest ES selector",
+        G_CS_SEL => "guest CS selector",
+        G_SS_SEL => "guest SS selector",
+        G_DS_SEL => "guest DS selector",
+        G_FS_SEL => "guest FS selector",
+        G_GS_SEL => "guest GS selector",
+        G_LDTR_SEL => "guest LDTR selector",
+        G_TR_SEL => "guest TR selector",
+        H_ES_SEL => "host ES selector",
+        H_CS_SEL => "host CS selector",
+        H_SS_SEL => "host SS selector",
+        H_DS_SEL => "host DS selector",
+        H_FS_SEL => "host FS selector",
+        H_GS_SEL => "host GS selector",
+        H_TR_SEL => "host TR selector",
+        G_LINK_PTR => "guest VMCS link pointer",
+        G_PAT => "guest IA32_PAT",
+        G_EFER => "guest IA32_EFER",
+        H_EFER => "host IA32_EFER",
+        PIN_CTLS => "pin-based controls",
+        PROC_CTLS => "primary processor-based controls",
+        EXC_BITMAP => "exception bitmap",
+        PF_ERR_MASK => "page-fault error-code mask",
+        PF_ERR_MATCH => "page-fault error-code match",
+        CR3_TGT_COUNT => "CR3-target count",
+        EXIT_CTLS => "exit controls",
+        EXIT_MSR_STORE => "exit MSR-store count",
+        EXIT_MSR_LOAD => "exit MSR-load count",
+        ENTRY_CTLS => "entry controls",
+        ENTRY_MSR_LOAD => "entry MSR-load count",
+        ENTRY_INT_INFO => "entry interruption information",
+        INSTR_ERROR => "VM-instruction error (read-only)",
+        EXIT_REASON => "exit reason (read-only)",
+        G_ES_LIM => "guest ES limit",
+        G_CS_LIM => "guest CS limit",
+        G_SS_LIM => "guest SS limit",
+        G_DS_LIM => "guest DS limit",
+        G_FS_LIM => "guest FS limit",
+        G_GS_LIM => "guest GS limit",
+        G_LDTR_LIM => "guest LDTR limit",
+        G_TR_LIM => "guest TR limit",
+        G_GDTR_LIM => "guest GDTR limit",
+        G_IDTR_LIM => "guest IDTR limit",
+        G_ES_AR => "guest ES access rights",
+        G_CS_AR => "guest CS access rights",
+        G_SS_AR => "guest SS access rights",
+        G_DS_AR => "guest DS access rights",
+        G_FS_AR => "guest FS access rights",
+        G_GS_AR => "guest GS access rights",
+        G_LDTR_AR => "guest LDTR access rights",
+        G_TR_AR => "guest TR access rights",
+        G_INTERRUPTIBILITY => "guest interruptibility state",
+        G_ACTIVITY => "guest activity state",
+        G_SYSENTER_CS => "guest IA32_SYSENTER_CS",
+        H_SYSENTER_CS => "host IA32_SYSENTER_CS",
+        CR0_MASK => "CR0 guest/host mask",
+        CR4_MASK => "CR4 guest/host mask",
+        CR0_SHADOW => "CR0 read shadow",
+        CR4_SHADOW => "CR4 read shadow",
+        G_CR0 => "guest CR0",
+        G_CR3 => "guest CR3",
+        G_CR4 => "guest CR4",
+        G_ES_BASE => "guest ES base",
+        G_CS_BASE => "guest CS base",
+        G_SS_BASE => "guest SS base",
+        G_DS_BASE => "guest DS base",
+        G_FS_BASE => "guest FS base",
+        G_GS_BASE => "guest GS base",
+        G_LDTR_BASE => "guest LDTR base",
+        G_TR_BASE => "guest TR base",
+        G_GDTR_BASE => "guest GDTR base",
+        G_IDTR_BASE => "guest IDTR base",
+        G_DR7 => "guest DR7",
+        G_RSP => "guest RSP",
+        G_RIP => "guest RIP",
+        G_RFLAGS => "guest RFLAGS",
+        G_PENDING_DBG => "guest pending debug exceptions",
+        G_SYSENTER_ESP => "guest IA32_SYSENTER_ESP",
+        G_SYSENTER_EIP => "guest IA32_SYSENTER_EIP",
+        H_CR0 => "host CR0",
+        H_CR3 => "host CR3",
+        H_CR4 => "host CR4",
+        H_FS_BASE => "host FS base",
+        H_GS_BASE => "host GS base",
+        H_TR_BASE => "host TR base",
+        H_GDTR_BASE => "host GDTR base",
+        H_IDTR_BASE => "host IDTR base",
+        H_SYSENTER_ESP => "host IA32_SYSENTER_ESP",
+        H_SYSENTER_EIP => "host IA32_SYSENTER_EIP",
+        0x6C14 => "host RSP (bridge-written)",
+        0x6C16 => "host RIP (bridge-written)",
+        _ => "unknown field",
+    }
+}
+
 const VMX_EXIT_REASON_CPUID: u64 = 10;
 const VMX_EXIT_REASON_HLT: u64 = 12;
 
@@ -1283,6 +1384,20 @@ unsafe fn vmxoff() -> (bool, bool) {
     (cf != 0, zf != 0)
 }
 
+/// VMWRITE with the hardware's verdict read off the flags: success
+/// is CF=0 and ZF=0; CF=1 is VMfailInvalid, ZF=1 is VMfailValid.
+///
+/// OPERAND ORDER, audited against the emitted bytes (2026-10-29,
+/// after the first KVM run reported 57 failed writes): the template
+/// below compiles to `0F 79 C1` — ModRM.reg holds the FIELD encoding
+/// (RCX, loaded with e.g. 0x4000 immediately before), the r/m operand
+/// holds the VALUE (RAX). That is exactly the hardware contract, and
+/// the launch bridge's hand-written `vmwrite rax, rcx` emits the
+/// identical byte pattern. A swapped helper would show the field and
+/// value registers exchanged in the disassembly; they are not. When
+/// this returns false on a real VMX implementation, the write was
+/// genuinely rejected — the failure is in WHAT was written, or in
+/// the state it was written from, never in this wrapper.
 fn vmwrite_checked(field: u64, value: u64) -> bool {
     let cf: u8;
     let zf: u8;
@@ -1294,6 +1409,10 @@ fn vmwrite_checked(field: u64, value: u64) -> bool {
     cf == 0 && zf == 0
 }
 
+/// VMREAD, same audit as vmwrite_checked: emits `0F 78 C8` —
+/// ModRM.reg (RCX) carries the FIELD encoding, the r/m operand (RAX)
+/// receives the value. Correct as written; verified in the binary,
+/// not assumed from the template's look.
 fn vmread_checked(field: u64) -> Option<u64> {
     let value: u64;
     let cf: u8;
@@ -1334,6 +1453,12 @@ fn vmx_teardown(vmcs_pa: u64, vmcs_current: bool, orig_cr0: u64, orig_cr4: u64) 
 
 fn vmx_first_guest() {
     sprint!("vmx: readiness: CPUID.VMX present — building the Intel twin of the first guest\r\n");
+    // The NPT block belongs to the AMD path (it is built inside
+    // svm_first_guest). Say so on this path, explicitly, so the
+    // absence of an "npt: self-check" line in an Intel log can never
+    // be misread as a missing or failed step — the verdict script
+    // keys on this line.
+    sprint!("npt: not applicable on Intel — EPT is this path's nested paging (next groundwork); the NPT tables belong to the AMD path\r\n");
 
     // ---- firmware gate: IA32_FEATURE_CONTROL ----
     let mut fc = rdmsr(msr_vmx::FEATURE_CONTROL);
@@ -1435,12 +1560,34 @@ fn vmx_first_guest() {
     let code_pa = GUEST_CODE.as_ptr() as u64;
     let guest_rsp = core::ptr::addr_of!(VMX_GUEST_STACK) as u64 + 4096;
 
+    // Every write is counted, and every FAILURE is named on the
+    // serial line the moment it happens — field encoding, field
+    // name, value attempted. The first failure also captures the
+    // VM-instruction error number (VMREAD of field 0x4400) before
+    // anything else can overwrite it: that number is the hardware's
+    // own classification of the rejection (12 = write to a
+    // read-only component, 28 = unsupported component, per the
+    // SDM's VM-instruction error table). This instrumentation
+    // exists because the first KVM run (2026-10-29) reported only
+    // the bare count — "57 VMCS field writes FAILED" — which could
+    // not distinguish a bad field, a bad ordering, or a bad state.
+    // A count is not a diagnosis; names and the error number are.
     let mut wfail = 0u32;
     let mut wcount = 0u32;
+    let mut first_fail: Option<(u64, u64)> = None; // (field, instr error)
     let mut w = |field: u64, value: u64| {
         wcount += 1;
         if !vmwrite_checked(field, value) {
             wfail += 1;
+            if first_fail.is_none() {
+                let err = vmread_checked(vf::INSTR_ERROR).unwrap_or(0);
+                first_fail = Some((field, err));
+                sprint!("vmx: write FAILED: field {:#x} ({}) = {:#x} — VM-instruction error {} (first failure; class per the SDM error table)\r\n",
+                        field, vf_name(field), value, err);
+            } else {
+                sprint!("vmx: write FAILED: field {:#x} ({}) = {:#x}\r\n",
+                        field, vf_name(field), value);
+            }
         }
     };
     // Control fields.
@@ -1460,6 +1607,44 @@ fn vmx_first_guest() {
     w(vf::CR4_MASK, 0);
     w(vf::CR0_SHADOW, guest_cr0);
     w(vf::CR4_SHADOW, guest_cr4);
+    // Reporter check, before the remaining writes are trusted to
+    // the same reporter: read the four control fields back and
+    // compare against what was written. Three outcomes, three
+    // different diseases, and they must never be conflated:
+    //   * read-back equals written  -> the writes land; any failure
+    //     later in the sequence is a true, field-specific rejection.
+    //   * read-back differs         -> writes are not landing as
+    //     reported; every success count downstream is suspect.
+    //   * read-back itself fails    -> the current VMCS is not
+    //     readable, which contradicts a successful VMPTRLD and
+    //     re-opens the state question entirely.
+    {
+        let rb = [
+            ("pin-based", vf::PIN_CTLS, pin_ctls as u64),
+            ("primary processor-based", vf::PROC_CTLS, proc_ctls as u64),
+            ("VM-exit", vf::EXIT_CTLS, exit_ctls as u64),
+            ("VM-entry", vf::ENTRY_CTLS, entry_ctls as u64),
+        ];
+        let mut rb_bad = 0u32;
+        for (name, field, written) in rb {
+            match vmread_checked(field) {
+                Some(read) if read == written => {}
+                Some(read) => {
+                    rb_bad += 1;
+                    sprint!("vmx: control read-back MISMATCH: {} controls written {:#x} but read {:#x} — reported writes are not landing\r\n",
+                            name, written, read);
+                }
+                None => {
+                    rb_bad += 1;
+                    sprint!("vmx: control read-back FAILED: {} controls ({:#x}) cannot be read back at all\r\n",
+                            name, field);
+                }
+            }
+        }
+        if rb_bad == 0 {
+            sprint!("vmx: control read-back: pin/proc/exit/entry all read back exactly as written\r\n");
+        }
+    }
     // Host state: the machine as it stands now (the exit lands here).
     w(vf::H_CR0, adj_cr0);
     w(vf::H_CR3, orig_cr3);
@@ -1535,7 +1720,28 @@ fn vmx_first_guest() {
     w(vf::G_SYSENTER_ESP, rdmsr(msr_vmx::SYSENTER_ESP));
     w(vf::G_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
     if wfail > 0 {
-        sprint!("vmx: {} VMCS field writes FAILED — aborting before any launch attempt\r\n", wfail);
+        let (ff, ferr) = first_fail.unwrap_or((0, 0));
+        sprint!("vmx: {} of {} VMCS field writes FAILED (first failure: field {:#x} ({}), VM-instruction error {}) — aborting before any launch attempt\r\n",
+                wfail, wcount, ff, vf_name(ff), ferr);
+        // Post-mortem stickiness check, the mirror of the control
+        // read-back: guest RIP was written late in the sequence and
+        // (in every run so far) reported as written. If it still
+        // holds its value, the reporter's successes are real and the
+        // failures named above are true per-field rejections. If it
+        // does not hold, nothing the reporter said can be trusted.
+        match vmread_checked(vf::G_RIP) {
+            Some(read) if read == code_pa => {
+                sprint!("vmx: post-mortem read-back: guest RIP holds {:#x} as written — reported successes are real; the failures above are true rejections of the named fields\r\n",
+                        read);
+            }
+            Some(read) => {
+                sprint!("vmx: post-mortem read-back: guest RIP reads {:#x}, expected {:#x} — reported successes did NOT stick; the reporter itself is suspect\r\n",
+                        read, code_pa);
+            }
+            None => {
+                sprint!("vmx: post-mortem read-back: guest RIP cannot be read back at all — the VMCS state itself is in question\r\n");
+            }
+        }
         vmx_teardown(vmcs_pa, true, orig_cr0, orig_cr4);
         return;
     }

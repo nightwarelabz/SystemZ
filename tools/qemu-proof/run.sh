@@ -16,7 +16,9 @@ ROOT="$(pwd)"
 # loop (tools/vm-test/run-vm.sh): tools/qemu-proof/build-esp.sh.
 # Never grow a second copy of it here — the two harnesses must boot
 # the same image, so they build it in exactly one place.
-"$ROOT/tools/qemu-proof/build-esp.sh"
+# Via bash, never direct exec: the git tree does not preserve the
+# exec bit, and both harnesses must work from a fresh clone.
+bash "$ROOT/tools/qemu-proof/build-esp.sh"
 ESP="$ROOT/tools/qemu-proof/esp.img"
 
 echo "== boot under QEMU/OVMF =="
