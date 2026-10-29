@@ -159,3 +159,30 @@ the existence of code alone.
   the mirror field the diff names; a second refusal confines the
   hunt to the block both states share. Guest birth still NOT
   proven; the rerun is the witness.
+- `vm-serial-2026-10-29-run6.log` — that run (same harness, same
+  machine, the read-back + bisect build). The new evidence class
+  performs exactly as designed: both attempts' dumps read back
+  **47 fields, 0 mismatched** — the VMCS holds precisely what the
+  code intended to write, so the crossed-writer class of defect
+  is closed for good — and guest CS sits in the VMCS as 0xA09B,
+  decoded [l 1 d/b 0 g 1]. The mirror is refused at entry
+  (**reason 33**, guest RIP unmoved, RAX sentinel intact, exit
+  qualification 0, exit interruption-information 0); the
+  canonical bisect — differing from the mirror in exactly **10
+  stored fields**, all of them in the segment/GDTR/TR block — is
+  refused **identically**. The segment block is therefore
+  exonerated as a class, and the refusal is confined to the
+  block both attempts share: the four control words (pin 0x16,
+  proc 0x40061F2, exit 0x336FFB, entry 0x13FB), guest CR0
+  0x80010033 / CR3 0x3FC01000 / CR4 0x668, guest IA32_EFER
+  0x900, PAT, the link pointer, the zeroed non-register trio,
+  the zeroed SYSENTER trio, GDTR/IDTR (IDTR was mirrored in both
+  attempts), RFLAGS/DR7/RSP/RIP. Guest birth still NOT proven.
+  The next build bisects that shared block itself: a ladder of
+  launches in one boot, one variable per rung against the
+  refused mirror — guest EFER taken from the host's live MSR
+  (the stored 0x900 carries LMA clear against an IA-32e-mode
+  entry), the SYSENTER trio re-sourced from the host MSRs, the
+  entry controls' load-IA32_EFER bit (SDM bit 15) set
+  explicitly, and a guarded probe of the entry controls'
+  unnamed bit 12 — stopping at the first rung that enters.
