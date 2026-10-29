@@ -25,6 +25,10 @@ Rust core those seams attach to.
   than claiming a birth. The proof belongs on physical hardware or a
   KVM-capable host — M2's first owed witness.
 - Builds for `x86_64-unknown-none` with `linker.ld`.
+- Accepts both v1 and v2 boot manifests; v2 continues the live alien
+  splash through CPU, memory and guest checks, then replaces it with the
+  actual diagnostic outcome. The shared freestanding C renderer adds no
+  external Rust dependencies. This is not an implemented operator shell.
 - **Boots through our UEFI loader under QEMU/OVMF** — proven
   2026-10-28, see `proofs/qemu-serial.log` (architecture proof, not a
   hardware verdict). Physical-hardware boot is still owed. VMXON, EPT,
@@ -36,3 +40,4 @@ Rust core those seams attach to.
 rustup target add x86_64-unknown-none
 cargo build --release
 ```
+

@@ -45,7 +45,35 @@ struct efi_simple_text_output {
     efi_status (__attribute__((ms_abi)) *reset)(efi_simple_text_output *, efi_bool);
     efi_status (__attribute__((ms_abi)) *output_string)(efi_simple_text_output *, const efi_char16 *);
     void *unused[4];
+    efi_status (__attribute__((ms_abi)) *clear_screen)(efi_simple_text_output *);
 };
+
+typedef struct { uint16_t scan_code; efi_char16 unicode_char; } efi_input_key;
+typedef struct efi_simple_text_input efi_simple_text_input;
+struct efi_simple_text_input {
+    void *reset;
+    efi_status (__attribute__((ms_abi)) *read_key_stroke)(efi_simple_text_input *, efi_input_key *);
+    void *wait_for_key;
+};
+
+/* GOP's current mode. We retain its framebuffer value, never its protocol
+ * or mode pointers, across ExitBootServices. UEFI 2.10, section 12.9. */
+typedef struct {
+    uint32_t version, width, height, pixel_format;
+    struct { uint32_t red, green, blue, reserved; } masks;
+    uint32_t pixels_per_scanline;
+} efi_gop_info;
+typedef struct {
+    uint32_t max_mode, mode;
+    efi_gop_info *info;
+    uint64_t info_size, framebuffer_base, framebuffer_size;
+} efi_gop_mode;
+typedef struct {
+    void *query_mode, *set_mode, *blt;
+    efi_gop_mode *mode;
+} efi_gop;
+static const efi_guid EFI_GOP_GUID =
+    { 0x9042A9DE, 0x23DC, 0x4A38, {0x96,0xFB,0x7A,0xDE,0xD0,0x80,0x51,0x6A} };
 
 /* ---- File System --------------------------------------------------- */
 
@@ -140,7 +168,9 @@ typedef struct {
     void *install_configuration_table;
     void *load_image, *start_image, *exit_fn, *unload_image;
     efi_status (__attribute__((ms_abi)) *exit_boot_services)(efi_handle, uint64_t);
-    void *monotonic_counter, *watchdog_timer;
+    void *monotonic_counter;
+    efi_status (__attribute__((ms_abi)) *stall)(uint64_t);
+    efi_status (__attribute__((ms_abi)) *watchdog_timer)(uint64_t, uint64_t, uint64_t, const efi_char16 *);
     void *connect_controller, *disconnect_controller;
     efi_status (__attribute__((ms_abi)) *open_protocol)(efi_handle, const efi_guid *,
                                                          void **, efi_handle, efi_handle,
@@ -150,6 +180,12 @@ typedef struct {
                                                                 uint64_t *, efi_handle **);
     efi_status (__attribute__((ms_abi)) *locate_protocol)(const efi_guid *, void *, void **);
 } efi_boot_services;
+
+/* These offsets catch missing slots in our intentionally partial table.
+ * UEFI 2.10, section 4.4: MonotonicCount, Stall, SetWatchdogTimer are
+ * three separate entries, not two. */
+_Static_assert(offsetof(efi_boot_services, stall) == 248, "UEFI Stall offset");
+_Static_assert(offsetof(efi_boot_services, locate_protocol) == 320, "UEFI LocateProtocol offset");
 
 #define EFI_OPEN_PROTOCOL_GET_PROTOCOL 0x00000002
 
@@ -166,7 +202,7 @@ typedef struct {
     const efi_char16 *firmware_vendor;
     uint32_t firmware_revision;
     efi_handle console_in_handle;
-    void *con_in;
+    efi_simple_text_input *con_in;
     efi_handle console_out_handle;
     efi_simple_text_output *con_out;
     efi_handle standard_error_handle;
@@ -178,3 +214,4 @@ typedef struct {
 } efi_system_table;
 
 #endif
+

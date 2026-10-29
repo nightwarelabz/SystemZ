@@ -1,0 +1,7 @@
+loader/*.o
+loader/BOOTX64.EFI
+boot/generated/
+zcore/target/
+tools/qemu-proof/esp.img
+tools/boot-splash/out/
+__pycache__/

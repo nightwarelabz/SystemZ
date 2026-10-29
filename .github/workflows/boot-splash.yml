@@ -1,0 +1,41 @@
+name: SystemZ boot splash
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install emulator witness tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf ffmpeg
+          rustup target add x86_64-unknown-none
+      - name: Guarded native renderer tests and UEFI build
+        run: bash tools/boot-splash/check.sh
+      - name: Build the real freestanding ZCore
+        working-directory: zcore
+        run: cargo build --release --locked
+      - name: Actual UEFI boot, error and fallback witnesses
+        run: python3 tools/boot-splash/qemu.py
+      - name: Render the animation from the same C implementation
+        run: |
+          mkdir -p tools/boot-splash/out/frames
+          tools/boot-splash/out/check tools/boot-splash/out/frames
+          ffmpeg -loglevel error -y -framerate 24 -i tools/boot-splash/out/frames/frame-%03d.ppm -c:v libx264 -pix_fmt yuv420p tools/boot-splash/out/renderer-preview.mp4
+      - name: Save boot binaries, live framebuffer evidence and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: systemz-boot-splash
+          path: |
+            loader/BOOTX64.EFI
+            zcore/target/x86_64-unknown-none/release/zcore
+            tools/boot-splash/out/qemu/
+            tools/boot-splash/out/renderer-preview.mp4
+          if-no-files-found: error

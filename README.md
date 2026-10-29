@@ -14,8 +14,19 @@ inside itself, and isolates everything by default.
 
 Insanely fast. Insanely moddable. Insanely powerful. Insanely secure.
 
-**Status:** founding specification — see [SPEC.md](SPEC.md). No code yet;
-every state claim in this repo is proven or labelled unproven.
+**Status:** early UEFI loader and freestanding ZCore. The live
+[alien boot splash](boot/README.md) draws animation, real initialization
+progress and failures, then hands over to ZCore diagnostics. The operator
+shell, full isolation stack and full OS are still being built. Emulator
+checks are distinguished from physical-hardware proof; see [SPEC.md](SPEC.md).
+
+## Boot screen
+
+The blurry alien is artwork; the boot controls are executable code. One
+freestanding renderer runs in both the UEFI loader and ZCore. Boot progress
+advances on completed operations, failed initialization remains visible,
+and unsupported graphics falls back to firmware text and serial. See the
+[build, fallback and verification instructions](boot/README.md).
 
 ## The shape
 
@@ -43,3 +54,4 @@ runtime (CPUID, ACPI, PCI enumeration) and drivers are written by
 device class (AHCI/NVMe, xHCI, NIC classes), never for a machine model.
 Any specific computer is only a witness where universal claims get
 proven.
+

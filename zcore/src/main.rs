@@ -23,6 +23,7 @@
 use core::arch::asm;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
+mod boot_screen;
 
 // ---------------------------------------------------------------- serial
 
@@ -133,6 +134,33 @@ struct ZBootInfo {
     rsdp_address: u64,
     zcore_base: u64,
     zcore_entry: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<ZBootInfo>() == 72);
+
+fn boot_manifest(address: u64) -> Option<&'static ZBootInfo> {
+    if address == 0 { return None; }
+    let info = unsafe { &*(address as *const ZBootInfo) };
+    if info.magic != ZBOOT_MAGIC ||
+        !((info.version == 1 && info.info_size >= 72) ||
+          (info.version == 2 && info.info_size >= 128)) {
+        sprint!("zboot: manifest magic/version/size rejected at {:#x}\r\n", address);
+        return None;
+    }
+    if info.version == 2 {
+        let graphics = unsafe {
+            &*((address + core::mem::size_of::<ZBootInfo>() as u64)
+                as *const boot_screen::Graphics)
+        };
+        if boot_screen::attach(graphics) {
+            sprint!("zboot: framebuffer accepted {}x{} stride {} format {}\r\n",
+                    graphics.framebuffer.width, graphics.framebuffer.height,
+                    graphics.framebuffer.stride, graphics.framebuffer.format);
+        } else {
+            sprint!("zboot: graphical splash disabled - serial diagnostics retained\r\n");
+        }
+    }
+    Some(info)
 }
 
 fn report_memory(info: &ZBootInfo) {
@@ -346,7 +374,9 @@ fn vmcb_seg(off: usize, selector: u16, attrib: u16, limit: u32, base: u64) {
 const EXIT_CPUID: u64 = 0x72;
 const EXIT_HLT: u64 = 0x78;
 
-fn svm_first_guest() {
+enum GuestResult { NotEntered, Failed, Born, Incomplete }
+
+fn svm_first_guest() -> GuestResult {
     sprint!("svm: enabling SVM (EFER.SVME + host save area)...\r\n");
     let efer = rdmsr(0xC000_0080);
     let hsave_pa = core::ptr::addr_of!(HSAVE) as u64;
@@ -426,11 +456,11 @@ fn svm_first_guest() {
         // RIP untouched — its VMRUN is a no-op. Say so plainly; the
         // birth proof belongs on hardware or a KVM host (SPEC SS18).
         sprint!("svm: guest birth NOT CLAIMED here — VMRUN did not enter in this environment (emulated VMRUN is a no-op); the machinery is complete and awaits a capable host\r\n");
-        return;
+        return GuestResult::NotEntered;
     }
     if exit1 != EXIT_CPUID {
         sprint!("svm: guest birth FAILED at first exit\r\n");
-        return;
+        return GuestResult::Failed;
     }
 
     // Emulate CPUID leaf 0 the way an AMD part answers it, ourselves:
@@ -449,8 +479,10 @@ fn svm_first_guest() {
     if exit2 == EXIT_HLT {
         sprint!("svm: GUEST BORN — ran, took our emulated cpuid (rax={:#x} rbx={:#x}), halted back to ZCore\r\n",
                 vmcb_r64(voff::RAX), regs.rbx);
+        GuestResult::Born
     } else {
         sprint!("svm: guest birth incomplete — second exit was not HLT\r\n");
+        GuestResult::Incomplete
     }
 }
 
@@ -462,8 +494,11 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
     unsafe { Serial::init() };
 
     sprint!("\r\nSystemZ ZCore — M1 skeleton\r\n");
+    let manifest = boot_manifest(manifest_addr);
+    boot_screen::step(6, b"ZCORE ENTERED - PROBING PROCESSOR\0");
 
     let caps = probe();
+    boot_screen::step(7, b"PROCESSOR PROBED - READING BOOT MANIFEST\0");
     let vendor = core::str::from_utf8(&caps.vendor).unwrap_or("<non-utf8>");
     sprint!("cpu vendor: {}\r\n", vendor);
     sprint!("max basic cpuid leaf: {:#x}\r\n", caps.max_basic_leaf);
@@ -479,21 +514,34 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
 
     deep_probe(&caps);
 
-    if manifest_addr != 0 {
-        let info = unsafe { &*(manifest_addr as *const ZBootInfo) };
-        if info.magic == ZBOOT_MAGIC {
-            report_memory(info);
-        } else {
-            sprint!("zboot: manifest magic MISMATCH at {:#x} — refusing its contents\r\n",
-                    manifest_addr);
-        }
+    if let Some(info) = manifest {
+        report_memory(info);
     } else {
         sprint!("zboot: no manifest (entered without the loader)\r\n");
     }
 
-    if caps.svm {
-        svm_first_guest();
-    }
+    boot_screen::step(8, b"MEMORY MAP REPORTED - CHECKING GUEST EXECUTION\0");
+    let guest = if caps.svm { Some(svm_first_guest()) } else { None };
+    boot_screen::step(9, b"EARLY BOOT CHECKS FINISHED - OPENING DIAGNOSTICS\0");
+
+    let cpu: &'static [u8] = if caps.svm { b"CPU: AMD SVM PRESENT\0" }
+        else if caps.vmx { b"CPU: INTEL VMX PRESENT\0" }
+        else { b"CPU: HARDWARE VIRTUALIZATION ABSENT\0" };
+    let (guest_line, result): (&'static [u8], &'static [u8]) = match guest {
+        Some(GuestResult::Born) => (b"SVM GUEST: EXECUTED CPUID / HLT\0",
+                                   b"FIRST GUEST PROVEN - EARLY CORE BOUNDARY\0"),
+        Some(GuestResult::NotEntered) => (b"SVM GUEST: DID NOT ENTER - BIRTH NOT CLAIMED\0",
+                                        b"GUEST PROOF REQUIRES A CAPABLE HOST\0"),
+        Some(GuestResult::Failed) => (b"SVM GUEST: FIRST EXIT FAILED\0",
+                                    b"GUEST EXECUTION FAILED - SEE COM1\0"),
+        Some(GuestResult::Incomplete) => (b"SVM GUEST: SECOND EXIT WAS NOT HLT\0",
+                                        b"GUEST EXECUTION INCOMPLETE - SEE COM1\0"),
+        None if caps.vmx => (b"VMX GUEST: NOT IMPLEMENTED\0",
+                            b"VMX CAPABILITY DETECTED - GUEST PATH PENDING\0"),
+        None => (b"GUEST: UNAVAILABLE\0", b"UNSUPPORTED CPU - SYSTEMZ CANNOT START\0"),
+    };
+    boot_screen::finish(cpu, guest_line, result);
+    sprint!("splash: diagnostics handoff complete (operator shell not implemented)\r\n");
 
     sprint!("zcore: halting (skeleton ends here, on purpose)\r\n");
     loop {
@@ -503,8 +551,10 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    boot_screen::panic_screen();
     sprint!("\r\nZCORE PANIC: {}\r\n", info);
     loop {
         unsafe { asm!("hlt", options(nostack)) };
     }
 }
+

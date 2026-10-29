@@ -15,14 +15,19 @@
 #define SYSTEMZ_ZBOOT_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include "../boot/splash.h"
 
 #define ZBOOT_MAGIC 0x313030544F4F425AULL /* "ZBOOT001" little-endian */
 #define ZBOOT_ADDRESS 0x100000ULL
 #define ZBOOT_MAP_PAGES 16 /* 64 KiB of memory-map space after page 0 */
+#define ZBOOT_VERSION 2u
+#define ZBOOT_V1_SIZE 72u
+#define ZBOOT_SPLASH_ENABLED 1u
 
 typedef struct {
     uint64_t magic;          /* ZBOOT_MAGIC */
-    uint32_t version;        /* manifest version: 1 */
+    uint32_t version;        /* v2 appends graphics; v1 prefix unchanged */
     uint32_t info_size;      /* sizeof(zboot_info) as the loader wrote it */
     uint64_t map_address;    /* physical address of the memory map copy */
     uint64_t map_size;       /* bytes of map that are valid */
@@ -32,6 +37,13 @@ typedef struct {
     uint64_t rsdp_address;   /* ACPI RSDP physical address, 0 if absent */
     uint64_t zcore_base;     /* where ZCore was placed */
     uint64_t zcore_entry;    /* the entry that is about to be called */
+    sz_framebuffer framebuffer;
+    uint32_t splash_flags;
+    uint32_t splash_frame;
 } zboot_info;
 
+_Static_assert(offsetof(zboot_info, framebuffer) == ZBOOT_V1_SIZE, "v1 prefix retained");
+_Static_assert(sizeof(zboot_info) == 128, "boot manifest v2 ABI");
+
 #endif
+
