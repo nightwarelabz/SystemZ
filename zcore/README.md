@@ -2,7 +2,11 @@
 
 The SystemZ microhypervisor (SPEC.md §4): vCPU scheduling, EPT/NPT
 isolation, interrupt routing, ZBus messaging. Rust, `no_std`, **zero
-external dependencies — by law, not preference.**
+external dependencies — by law, not preference.** Per the SPEC.md §2
+language doctrine, the CPU-plumbing layer (VMX/SVM setup, page tables,
+interrupt entry) will arrive as small, audited C modules at the seam,
+and the ZBus/brick ABI is defined in C headers — this skeleton is the
+Rust core those seams attach to.
 
 ## State — M1 skeleton
 

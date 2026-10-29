@@ -20,8 +20,12 @@ every state claim in this repo is proven or labelled unproven.
 ## The shape
 
 - **ZCore** — a microhypervisor in Rust (`no_std`, zero external
-  dependencies): vCPU scheduling, EPT/NPT memory isolation, interrupt
-  routing, inter-domain messaging. Four jobs, nothing else.
+  dependencies), with C at the key seams — the loader/firmware path,
+  the brick ABI, CPU plumbing, driver class interfaces — for maximum
+  capability and universality: vCPU scheduling, EPT/NPT memory
+  isolation, interrupt routing, inter-domain messaging. Four jobs,
+  nothing else. Every brick interface is a C header, so bricks can be
+  written in any language.
 - **Domains** — admin, network, firewall, update, and developer project
   domains, each isolated, each talking over the ZBus, each replaceable.
 - **Bricks** — every component is a signed, content-hashed, versioned
@@ -31,7 +35,11 @@ every state claim in this repo is proven or labelled unproven.
   Updates are atomic new generations with trial boot and automatic
   rollback.
 
-## First target
+## Target: the x86_64 architecture
 
-x86_64 with VT-x/EPT (or AMD-V/NPT) and an IOMMU (VT-d / AMD-Vi).
-First witness machine class: HP EliteDesk 800 G1.
+One logic, every machine: x86_64 with VT-x/EPT (or AMD-V/NPT) and an
+IOMMU (VT-d / AMD-Vi). No per-model targets — hardware is discovered at
+runtime (CPUID, ACPI, PCI enumeration) and drivers are written by
+device class (AHCI/NVMe, xHCI, NIC classes), never for a machine model.
+Any specific computer is only a witness where universal claims get
+proven.
