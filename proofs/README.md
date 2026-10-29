@@ -1,5 +1,8 @@
 # proofs/
 
+The live boot splash has separate [QEMU/OVMF boot, error and fallback
+evidence](boot-splash/README.md), including actual framebuffer captures.
+
 Every milestone in SPEC.md §21 exits on a proof recorded here — a
 hardware census, a flight-recorder log, a break-and-heal run — never on
 the existence of code alone.
@@ -14,3 +17,4 @@ the existence of code alone.
   only — M1's exit proof remains a cold boot on physical hardware.
   The SVM guest birth is explicitly NOT claimed in this log: QEMU
   TCG's VMRUN does not enter (see zcore/README.md).
+

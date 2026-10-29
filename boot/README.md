@@ -1,5 +1,9 @@
 # SystemZ live boot splash
 
+The first complete QEMU/OVMF run passed all five boot witnesses. Its
+[actual framebuffer captures and serial logs](../proofs/boot-splash/README.md)
+are checked in with the tested source commit and workflow artifact.
+
 The original blurry alien and recursive artwork is a **text-free texture**.
 The wordmark, moving tunnel texture, progress segments, status, failures and
 transition into diagnostics are drawn by `splash.c` in the actual boot path.
