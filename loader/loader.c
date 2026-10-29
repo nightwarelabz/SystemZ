@@ -11,9 +11,9 @@
  *   5. exits boot services and jumps to the ELF entry point.
  *
  * What it does NOT do yet (future PRs, in the spec's own order):
- * generation seals, TPM measurement, trial generations, the boot
- * manifest in registers. _start today takes no arguments; the jump
- * below is where the manifest hand-off will live.
+ * generation seals, TPM measurement, trial generations. The boot
+ * manifest (zboot.h) IS built and handed off today — its address is
+ * passed to ZCore's entry in RDI at the jump below.
  */
 #include "efi.h"
 #include "zboot.h"
@@ -241,18 +241,28 @@ static uint64_t find_rsdp(void) {
 }
 
 static void exit_and_jump(efi_handle image, uint64_t entry) {
-    /* Reserve the manifest range first (zboot.h): page 0 is the info
+    /* Reserve the manifest pages first (zboot.h): page 0 is the info
        struct, the following pages receive the memory map itself.
        These pages are EfiLoaderData: after ExitBootServices they are
-       ZCore's to keep, and ZCore knows the fixed address. */
+       ZCore's to keep.
+       The manifest lives wherever firmware grants pages —
+       AllocateAnyPages, never a demanded address. It used to sit at
+       a fixed 0x100000 (AllocateAddress): OVMF granted that address,
+       but the first physical boot (HP EliteDesk 800 G1, 2026-10-29)
+       refused it with EFI_NOT_FOUND — the 1 MiB range is not free
+       in HP's firmware. The address firmware returns here is the
+       only address there is, and it reaches ZCore in RDI below. */
+    uint64_t manifest = 0;
     {
-        uint64_t addr = ZBOOT_ADDRESS;
-        efi_status s = BS->allocate_pages(AllocateAddress, EfiLoaderData,
-                                          1 + ZBOOT_MAP_PAGES, &addr);
+        efi_status s = BS->allocate_pages(AllocateAnyPages, EfiLoaderData,
+                                          1 + ZBOOT_MAP_PAGES, &manifest);
         if (EFI_ERROR(s)) die("AllocatePages for boot manifest", s);
     }
-    zboot_info *info = (zboot_info *)ZBOOT_ADDRESS;
-    uint8_t *map = (uint8_t *)(ZBOOT_ADDRESS + 0x1000);
+    print("loader: boot manifest at ");
+    print_hex(manifest);
+    print("\r\n");
+    zboot_info *info = (zboot_info *)manifest;
+    uint8_t *map = (uint8_t *)(manifest + 0x1000);
     const uint64_t map_cap = ZBOOT_MAP_PAGES * 0x1000ULL;
 
     uint64_t map_size = map_cap, map_key = 0, desc_size = 0;
@@ -287,7 +297,7 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
        Entry is System V: the manifest address goes in RDI, which is
        exactly the first-argument register — declare it plainly. */
     typedef void (*entry_fn)(uint64_t);
-    ((entry_fn)entry)(ZBOOT_ADDRESS);
+    ((entry_fn)entry)(manifest);
     for (;;) { __asm__ volatile ("hlt"); }
 }
 
