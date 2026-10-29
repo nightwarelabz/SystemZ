@@ -1,6 +1,6 @@
-# SystemZ
+![SystemZ — NIGHTWARE LABZ](assets/banner.jpg)
 
-**NIGHTWARE LABZ**
+# SystemZ
 
 SystemZ is a hypervisor-based operating system for x86_64 computers, built
 entirely from scratch on our own concepts — no borrowed hypervisor, no
