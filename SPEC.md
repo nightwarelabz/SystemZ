@@ -533,6 +533,21 @@ compositor that does not yet exist. GPU passthrough to lab/dev domains
 (for compute and foreign desktops) is a ZCore/IOMMU matter and does not
 wait for C35.
 
+**Designation (Chase, 2026-10-29):** Comigen (C35) is SystemZ's **main
+graphics engine** — the designation settles *which* engine; the
+milestone settles *when*. The hold above stands unchanged: C35 enters
+as the sys-gpu / compositor brick-set when the deployment need arrives
+(M8), built to SystemZ's requirements. The full house composition —
+the house's other utilities, and where each belongs — is censused in
+INTEGRATION.md.
+
+**The browser system is likewise designated (Chase, 2026-10-29):
+orc**, our own browser, with its bundled Tractor search. Like the
+graphics engine it is no part of the minimal core: it arrives as an
+app brick-set hosted in user-facing domains (disposable, lab, project)
+in the same deployment era, and no core decision may assume a browser
+that does not yet exist either.
+
 ## 17. Hardware — one x86_64 logic, every machine
 
 SystemZ is built **from the x86_64 architecture itself**: the same logic
