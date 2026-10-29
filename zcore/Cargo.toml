@@ -1,0 +1,18 @@
+[package]
+name = "zcore"
+version = "0.0.1"
+edition = "2021"
+description = "SystemZ microhypervisor core — M1 skeleton (SPEC.md SS4)"
+license = "AGPL-3.0-only"
+
+# ZCore takes zero external dependencies. This is a law (SPEC.md SS2),
+# not a preference: the trusted core's whole supply chain is this repo.
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
