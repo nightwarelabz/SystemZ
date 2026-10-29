@@ -43,3 +43,15 @@ runtime (CPUID, ACPI, PCI enumeration) and drivers are written by
 device class (AHCI/NVMe, xHCI, NIC classes), never for a machine model.
 Any specific computer is only a witness where universal claims get
 proven.
+
+## The house, plugged in
+
+SystemZ is composed from the house's own work: **Comigen (C35)** is
+its designated main graphics engine, **orc** its designated browser
+system, and every other house utility — nightwire, nightjar, the
+Blacksite benches, phantom, Magic Box, orange, snoot, and the rest —
+has a named home in the architecture. The census, the integration
+forms, the earliest milestone that can absorb each piece, and its
+honest status today live in [INTEGRATION.md](INTEGRATION.md). Nothing
+on that map is integrated yet; it records designations and the order
+they can arrive in.
