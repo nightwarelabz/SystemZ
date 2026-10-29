@@ -1016,12 +1016,11 @@ struct VmxRegs {
 static mut VMXON_REGION: AlignedPage = AlignedPage([0; 4096]);
 static mut VMCS_REGION: AlignedPage = AlignedPage([0; 4096]);
 static mut VMX_GUEST_STACK: AlignedPage = AlignedPage([0; 4096]);
-// The canonical bisect's own tables (see build_canonical_tables):
-// a GDT and a 64-bit TSS image that belong to ZCore and to nobody
-// else — the guest state of the second attempt is built on these,
-// not on the host's live tables.
-static mut CANON_GDT: AlignedPage = AlignedPage([0; 4096]);
-static mut CANON_TSS: AlignedPage = AlignedPage([0; 4096]);
+// (The canonical bisect's own GDT/TSS pages stood here until the
+// ladder round. Run 6's bisect — a wholesale swap of the segment
+// block, refused identically — exonerated the segments as a class,
+// so the tables and their builders are retired; the bisect's
+// evidence lives in proofs/vm-serial-2026-10-29-run6.log.)
 
 // VMX MSRs (Intel SDM Vol. 4).
 mod msr_vmx {
@@ -1594,6 +1593,37 @@ fn vmx_first_guest() {
     // current EFER field (which carries LMA = 0): that pairing
     // would fail entry on the EFER checks instead.
     let entry_ctls = adjust_controls(entry_msr, (1 << 9) | (1 << 16));
+    // The load-bit tables the ladder patches and the dump decodes
+    // against, verified for the ladder round against the SDM text
+    // itself (Vol. 3C, VM-entry controls §24.8.1 and VM-exit
+    // controls §24.7.1, two editions) and cross-checked against the
+    // Linux kernel's arch/x86/include/asm/vmx.h constants — both
+    // sources agree bit for bit:
+    //   entry: 2 load DEBUGCTL, 9 IA-32e-mode guest,
+    //          13 load IA32_PERF_GLOBAL_CTRL, 14 load IA32_PAT,
+    //          15 load IA32_EFER, 16 load IA32_BNDCFGS.
+    //   exit:  9 host address-space size (64-bit host),
+    //          12 load IA32_PERF_GLOBAL_CTRL, 15 ack-interrupt,
+    //          18 save IA32_PAT, 19 load IA32_PAT,
+    //          20 save IA32_EFER, 21 load IA32_EFER.
+    // A draft of the ladder round's own brief carried the entry
+    // table shifted by one (PERF at 12, PAT at 13, EFER at 14) and
+    // proposed renumbering this file's annotations to match; the
+    // SDM text and the kernel constants convict the draft — the
+    // annotations already here (PERF at 13, EFER at 15, BNDCFGS
+    // at 16, DEBUGCTL at 2) ARE the SDM numbering, and nothing was
+    // renumbered. The desired-bit audit against these tables: pin
+    // desired 0 (the flown 0x16 is entirely must-be-1 bits); proc
+    // desired bit 7 = HLT exiting (§24.6.2); exit desired bits
+    // 9/20/21 as the comment above states; entry desired bits 9
+    // and 16 as documented — bit 16 (load IA32_BNDCFGS) being the
+    // one fossil of an older misreading, inert because the
+    // capability mask clears it on every machine observed, and
+    // never load-bearing in any flown value (runs 1-6 all show it
+    // clear in the final controls). The ladder does not touch the
+    // desired expression; its R3 sets the TRUE load-EFER bit (15)
+    // as a rung patch, paired with R1's host-true EFER field —
+    // the pairing the bit-16 comment above already demands.
     sprint!("vmx: controls from capability MSRs ({}): pin {:#x} proc {:#x} exit {:#x} entry {:#x}\r\n",
             if use_true { "true-controls" } else { "legacy controls" },
             pin_ctls, proc_ctls, exit_ctls, entry_ctls);
@@ -1603,16 +1633,18 @@ fn vmx_first_guest() {
     // One machine, read once. The controls, the adjusted CRs, the
     // host-state pieces and the shared guest block (CRs, EFER, PAT,
     // SYSENTER, link pointer, RIP/RSP/RFLAGS) are IDENTICAL for the
-    // mirror attempt and the canonical bisect — that identity is
-    // what makes the second attempt a bisection rather than a
-    // second guess. Only the segment block (GuestSegs) differs.
+    // mirror attempt and for every ladder rung — that identity is
+    // what makes a rung a single-variable experiment rather than a
+    // second guess. A rung differs from the refused mirror ONLY in
+    // its patch (see vmx_attempt); the segment block is the
+    // mirror's throughout (run 6's bisect exonerated it).
     let efer_now = rdmsr(msr_vmx::EFER);
     let (cs, ss, ds, es, fs, gs, tr, ldtr) = seg_selectors();
     let (gdt_base, gdt_limit, idt_base, idt_limit) = dt_regs();
     let dr7: u64;
     unsafe { asm!("mov {}, dr7", out(reg) dr7, options(nostack)) };
     let world = VmxWorld {
-        pin_ctls, proc_ctls, exit_ctls, entry_ctls,
+        pin_ctls, proc_ctls, exit_ctls, entry_ctls, entry_msr,
         adj_cr0, adj_cr4, orig_cr0, orig_cr3, orig_cr4,
         efer_now,
         // Guest EFER: host bits SCE|LME|NXE only — LMA is
@@ -1631,58 +1663,86 @@ fn vmx_first_guest() {
     };
     let mirror = mirror_segs(&world);
 
-    // ---- attempt 1: the mirror (the production path, unchanged) ----
-    let mut stored_mirror = Stored::new();
-    match vmx_attempt(&world, &mirror, false, None, vmcs_pa, &mut stored_mirror) {
+    // ---- rung 0: the mirror (the production path, unchanged) ----
+    // The control rung: the exact attempt the previous rounds
+    // flew. If it is refused again — as run 6 says it will be —
+    // the ladder below climbs; if it enters, nothing else runs.
+    let mut stored_r0 = Stored::new();
+    match vmx_attempt(&world, &mirror, 0, vmcs_pa, &mut stored_r0) {
         Attempt::Refused33 => {}
         _ => return,
     }
 
-    // ---- attempt 2: the canonical bisect (diagnostic) ----
-    // The mirror was refused at entry (reason 33) with its read-back
-    // dump on the record above; teardown already happened inside
-    // the attempt. Re-enter VMX and launch the same 7-byte program
-    // on a hand-built canonical guest state. If the canonical state
-    // enters, the mirror inherits a poisoned field and the dump
-    // diff names it; if both are refused, the refusal lives in the
-    // block the attempts share.
-    sprint!("vmx: bisect: the mirror guest state was refused at entry (reason 33) — bisecting with a hand-built canonical guest state in the same boot\r\n");
-    write_cr(0, adj_cr0);
-    write_cr(4, adj_cr4);
-    unsafe {
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u8, 0, 4096);
-        core::ptr::write_unaligned(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u32, revision as u32);
+    // ---- the ladder: the shared block, one variable at a time ----
+    // Run 6's canonical bisect varied the entire segment block at
+    // once and was refused identically, which exonerated the
+    // segments as a class and confined the refusal to the block
+    // every attempt shares. The ladder walks THAT block in the
+    // same boot: each rung relaunches the mirror with exactly one
+    // variable changed (the patches live in vmx_attempt), stopping
+    // at the first rung whose first exit is reason 10 (CPUID) —
+    // the entering rung convicts the variable it changed.
+    sprint!("vmx: ladder: the mirror guest state was refused at entry (reason 33) — climbing the shared block one variable at a time in the same boot\r\n");
+    let mut launched = 0u32;
+    let mut refused = 0u32;
+    for rung in 1..=4u8 {
+        if rung == 4 {
+            // R4 probes entry-controls bit 12: a bit with NO row
+            // in the SDM §24.8.1 table, present in the flown value
+            // 0x13fb only because adjust_controls ORs the
+            // capability MSR's must-be-1 dword into the result. If
+            // it is must-be-1 on this machine, clearing it would
+            // invalidate the control field itself — the launch
+            // would fail as a bad control field, not be refused as
+            // a bad guest state — and there is no legal rung to
+            // fly. (By the adjust formula and run 6's 0x13fb, it
+            // IS must-be-1 on the 800 G1's KVM; the check is made
+            // here, from the live MSR, not from that deduction.)
+            let caps = rdmsr(entry_msr);
+            if (caps as u32) & (1 << 12) != 0 {
+                sprint!("vmx: ladder R4: NOT APPLICABLE — entry-controls bit 12 is must-be-1 per the capability MSR {:#x} (must-be-1 dword {:#x}); its presence in the flown controls is architectural, not a choice, and clearing it is not a legal experiment on this machine\r\n",
+                        caps, caps as u32);
+                break;
+            }
+            sprint!("vmx: ladder R4: entry-controls bit 12 is not must-be-1 on this machine — the rung may clear it\r\n");
+        }
+        match rung {
+            1 => sprint!("vmx: ladder R1: + guest IA32_EFER := the host's live IA32_EFER MSR (the constructed field's clear LMA bit is the suspect)\r\n"),
+            2 => sprint!("vmx: ladder R2: + guest SYSENTER CS/ESP/EIP := the host's live IA32_SYSENTER_* MSRs, read and printed at the patch (R1 retained)\r\n"),
+            3 => sprint!("vmx: ladder R3: + entry controls: load IA32_EFER (SDM bit 15) set explicitly, so the entry itself loads the host-true EFER (R1+R2 retained)\r\n"),
+            _ => sprint!("vmx: ladder R4: + entry controls: bit 12 cleared — the unnamed capability-forced bit (R1+R2+R3 retained)\r\n"),
+        }
+        if !vmx_reenter(adj_cr0, adj_cr4, vmxon_pa, revision, vmcs_pa,
+                        orig_cr0, orig_cr4) {
+            return;
+        }
+        let mut stored_rung = Stored::new();
+        launched += 1;
+        match vmx_attempt(&world, &mirror, rung, vmcs_pa, &mut stored_rung) {
+            Attempt::Refused33 => { refused += 1; }
+            _ => return,
+        }
     }
-    let (cf, zf) = unsafe { vmx_op_pa(0, vmxon_pa) };
-    if cf || zf {
-        sprint!("vmx: bisect: VMXON FAILED on re-entry (cf {} zf {}) — the bisect cannot run; the mirror's evidence stands\r\n", cf as u8, zf as u8);
-        write_cr(0, orig_cr0);
-        write_cr(4, orig_cr4);
-        return;
-    }
-    sprint!("vmx: bisect: VMX re-entered (cr0/cr4 re-adjusted to {:#x}/{:#x}, VMXON ok)\r\n", adj_cr0, adj_cr4);
-    if !vmx_prepare_vmcs(vmcs_pa, revision) {
-        vmx_teardown(vmcs_pa, false, orig_cr0, orig_cr4);
-        return;
-    }
-    build_canonical_tables();
-    let canonical = canonical_segs(&world);
-    let mut stored_canon = Stored::new();
-    let _ = vmx_attempt(&world, &canonical, true, Some(&stored_mirror), vmcs_pa, &mut stored_canon);
-    // Every bisect outcome is terminal for this boot; the birth (or
-    // the refusal) and the teardown are already on the record.
+    sprint!("vmx: ladder: no rung entered — {} rung(s) launched, {} refused at entry (reason 33); a rung marked NOT APPLICABLE above did not launch. The shared block stands exonerated variable by variable, and the refusal now points beneath ZCore, at how the entry is constructed for a nested guest (KVM's vmcs02 synthesis). The per-rung read-back dumps above are the evidence\r\n",
+            launched, refused);
 }
 
-/// Everything both VMX guest attempts share, read once from the
-/// live machine: the capability-computed controls, the VMX-adjusted
-/// CRs the host state needs, and the shared guest block. Keeping
-/// these in one struct is what guarantees the bisect's premise —
-/// the two attempts differ ONLY in their GuestSegs.
+/// Everything the mirror attempt and every ladder rung share,
+/// read once from the live machine: the capability-computed
+/// controls, the VMX-adjusted CRs the host state needs, and the
+/// shared guest block. Keeping these in one struct is what
+/// guarantees the ladder's premise — a rung differs from the
+/// refused mirror ONLY in its patch (see vmx_attempt), never in
+/// anything this struct carries.
 struct VmxWorld {
     pin_ctls: u32,
     proc_ctls: u32,
     exit_ctls: u32,
     entry_ctls: u32,
+    /// Which capability MSR the entry controls came from (the
+    /// true-controls MSR when the BASIC MSR offers it) — the
+    /// ladder's R3/R4 patches re-adjust through this same MSR.
+    entry_msr: u32,
     adj_cr0: u64,
     adj_cr4: u64,
     orig_cr0: u64,
@@ -1710,9 +1770,12 @@ struct VmxWorld {
     guest_rsp: u64,
 }
 
-/// The guest segment block — the ONLY part of the guest state the
-/// two attempts build differently. Arrays are indexed in the
-/// order ES, CS, SS, DS, FS, GS, LDTR, TR throughout.
+/// The guest segment block — built once, from the host's live
+/// state, and flown identically by the mirror and every ladder
+/// rung (run 6's bisect varied this block wholesale and was
+/// refused identically; the ladder never touches it). Arrays are
+/// indexed in the order ES, CS, SS, DS, FS, GS, LDTR, TR
+/// throughout.
 struct GuestSegs {
     sel: [u16; 8],
     base: [u64; 8],
@@ -1754,86 +1817,15 @@ fn mirror_segs(w: &VmxWorld) -> GuestSegs {
     }
 }
 
-/// Build the bisect's own descriptor tables in CANON_GDT /
-/// CANON_TSS. The table is real — its address is what the guest
-/// GDTR field will carry — and every value in it is a constant
-/// chosen entry-legal by construction (see canonical_segs).
-fn build_canonical_tables() {
-    let gdt = core::ptr::addr_of_mut!(CANON_GDT) as *mut u64;
-    let tss = core::ptr::addr_of!(CANON_TSS) as u64;
-    unsafe {
-        core::ptr::write_bytes(gdt as *mut u8, 0, 4096);
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(CANON_TSS) as *mut u8, 0, 4096);
-        // Entry 0: null. Entry 1 (selector 0x08): flat 64-bit code —
-        // base 0, limit 0xFFFFF pages (G=1 => 0xFFFFFFFF), access
-        // 0x9B (code R/X accessed, ring 0, present), flags nibble
-        // 0xA (G=1, D/B=0, L=1): the descriptor whose VMCS access
-        // rights are 0xA09B.
-        core::ptr::write_unaligned(gdt.add(1), 0x00AF_9B00_0000_FFFFu64);
-        // Entry 2 (selector 0x10): flat data — access 0x93 (data
-        // R/W accessed, ring 0, present), flags 0xC (G=1, D/B=1):
-        // access rights 0xC093, limit 0xFFFFFFFF.
-        core::ptr::write_unaligned(gdt.add(2), 0x00CF_9300_0000_FFFFu64);
-        // Entries 3–4 (selector 0x18): the 64-bit TSS descriptor,
-        // 16 bytes — limit 0x67 (a 104-byte TSS), base = CANON_TSS,
-        // access 0x8B: type 11, BUSY. Section 26.3.1.2 requires the
-        // guest TR's type to be 11; a TSS image nobody has loaded
-        // would be type 9 (available), so the descriptor is born
-        // busy — the entry checks judge the VMCS fields, and the
-        // 7-byte guest never task-switches.
-        let lo = 0x67u64
-            | ((tss & 0xFFFF) << 16)
-            | (((tss >> 16) & 0xFF) << 32)
-            | (0x8Bu64 << 40)
-            | (((tss >> 24) & 0xFF) << 56);
-        core::ptr::write_unaligned(gdt.add(3), lo);
-        core::ptr::write_unaligned(gdt.add(4), tss >> 32);
-        // The TSS image itself: all zero except the I/O-permission
-        // bitmap base at offset 102, set just past the 104-byte
-        // TSS (no bitmap follows).
-        core::ptr::write_unaligned((tss as *mut u8).add(102) as *mut u16, 104u16);
-    }
-}
-
-/// The bisect's segment block: hand-built canonical constants on
-/// ZCore's own tables — nothing here is read from the host.
-///
-/// Entry-legality, per §26.3.1.2/.3, value by value: code and data
-/// descriptors are the flat ring-0 pair (CS type 11 nonconforming
-/// with DPL 0 = SS DPL 0; SS type 3 with DPL = its selector's RPL
-/// 0; data type 3 accessed with DPL >= RPL 0; every usable AR has
-/// bits 11:8 = 0, bits 31:17 = 0, and G = 1 as the 0xFFFFFFFF
-/// limits require; CS has the IA-32e pair L = 1, D/B = 0). All
-/// bases are 0 (canonical, and CS/SS/DS/ES keep bits 63:32 = 0 as
-/// required) except TR's, which is CANON_TSS's own address. LDTR
-/// is the unusable constant (selector 0, AR 0x10000) — exempt from
-/// the usable-segment checks. TR: selector 0x18 (TI = 0), limit
-/// 0x67 with G = 0 — §26.3.1.2 requires G = 0 when a 0 bit appears
-/// in limit bits 11:0, and 0x67 has them. GDTR names
-/// build_canonical_tables' table: base canonical, limit 0x27 (40
-/// bytes: null, code, data, the two TSS qwords), bits 31:16 = 0.
-/// IDTR is the one mirrored piece, deliberately and stated: the
-/// guest runs 7 bytes with IF clear (RFLAGS 0x2) and entry
-/// injects nothing, so the IDT is never dereferenced — entry only
-/// needs its base canonical and its limit's high bits zero, which
-/// the live IDTR satisfies.
-fn canonical_segs(w: &VmxWorld) -> GuestSegs {
-    GuestSegs {
-        sel: [0x10, 0x08, 0x10, 0x10, 0x10, 0x10, 0, 0x18],
-        base: [0, 0, 0, 0, 0, 0, 0, core::ptr::addr_of!(CANON_TSS) as u64],
-        lim: [0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF,
-              0xFFFF_FFFF, 0xFFFF_FFFF, 0, 0x67],
-        ar: [0xC093, 0xA09B, 0xC093, 0xC093, 0xC093, 0xC093, 0x10000, 0x8B],
-        gdtr_base: core::ptr::addr_of!(CANON_GDT) as u64,
-        gdtr_lim: 0x27,
-        idtr_base: w.idt_base,
-        idtr_lim: w.idt_limit,
-    }
-}
+/// (build_canonical_tables and canonical_segs stood here until
+/// the ladder round: the bisect they served concluded in run 6
+/// with the segment block exonerated, and the ladder that
+/// replaced it never builds a second segment block. Their
+/// evidence is run 6's log, filed in proofs/.)
 
 /// Zero the VMCS region, stamp the revision ID, VMCLEAR, VMPTRLD.
-/// Used for the first attempt and again, identically, for the
-/// bisect's second VMCS. Failure lines print here; the caller owns
+/// Used for the mirror attempt and again, identically, before
+/// every ladder rung. Failure lines print here; the caller owns
 /// the teardown decision.
 fn vmx_prepare_vmcs(vmcs_pa: u64, revision: u64) -> bool {
     unsafe {
@@ -1853,6 +1845,40 @@ fn vmx_prepare_vmcs(vmcs_pa: u64, revision: u64) -> bool {
     }
     sprint!("vmx: VMCS region {:#x} (revision {}, shadow indicator clear) — VMCLEAR + VMPTRLD ok\r\n",
             vmcs_pa, revision);
+    true
+}
+
+/// Re-enter VMX before a ladder rung. The previous attempt's
+/// teardown already VMXOFFed and restored the host CRs, so this
+/// re-adjusts them, rewrites the VMXON region, VMXONs again and
+/// prepares a fresh VMCS — the same sequence the first entry
+/// flew, factored out so every rung starts from an identical
+/// machine state. Prints its own lines; on failure the host CRs
+/// are restored (or the teardown restores them) and false comes
+/// back, and the ladder stops with the evidence already printed
+/// standing as the round's record.
+fn vmx_reenter(adj_cr0: u64, adj_cr4: u64, vmxon_pa: u64, revision: u64,
+               vmcs_pa: u64, orig_cr0: u64, orig_cr4: u64) -> bool {
+    write_cr(0, adj_cr0);
+    write_cr(4, adj_cr4);
+    unsafe {
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u8, 0, 4096);
+        core::ptr::write_unaligned(core::ptr::addr_of_mut!(VMXON_REGION) as *mut u32, revision as u32);
+    }
+    let (cf, zf) = unsafe { vmx_op_pa(0, vmxon_pa) };
+    if cf || zf {
+        sprint!("vmx: ladder: VMXON FAILED on re-entry (cf {} zf {}) — the ladder stops here\r\n",
+                cf as u8, zf as u8);
+        write_cr(0, orig_cr0);
+        write_cr(4, orig_cr4);
+        return false;
+    }
+    sprint!("vmx: ladder: VMX re-entered (cr0/cr4 re-adjusted to {:#x}/{:#x}, VMXON ok)\r\n",
+            adj_cr0, adj_cr4);
+    if !vmx_prepare_vmcs(vmcs_pa, revision) {
+        vmx_teardown(vmcs_pa, false, orig_cr0, orig_cr4);
+        return false;
+    }
     true
 }
 
@@ -1876,6 +1902,25 @@ impl WriteRec {
             }
         }
         None
+    }
+    /// Overwrite a recorded intent in place. A ladder patch
+    /// changes one field AFTER the fill, and the read-back dump
+    /// must judge the stored value against the rung's intent, not
+    /// the fill's — without this, every patched field would
+    /// headline as a false MISMATCH and the dump's verdict would
+    /// be unusable on exactly the fields under test.
+    fn set(&mut self, field: u64, value: u64) {
+        for i in 0..self.n {
+            if self.fields[i] == field {
+                self.values[i] = value;
+                return;
+            }
+        }
+        if self.n < 96 {
+            self.fields[self.n] = field;
+            self.values[self.n] = value;
+            self.n += 1;
+        }
     }
 }
 
@@ -1925,14 +1970,33 @@ impl Fill {
             }
         }
     }
+    /// A ladder patch: one deliberate post-fill change to a
+    /// single field — the rung's variable. NOT routed through
+    /// w(): the fill's write count and write sequence belong to
+    /// the control rung and stay exactly 87, and the dump must
+    /// judge the patched intent (hence rec.set). A failed patch
+    /// names itself like any other rejected write and aborts the
+    /// rung before any launch attempt.
+    fn patch(&mut self, field: u64, value: u64) -> bool {
+        if vmwrite_checked(field, value) {
+            self.rec.set(field, value);
+            true
+        } else {
+            let err = vmread_checked(vf::INSTR_ERROR).unwrap_or(0);
+            sprint!("vmx: ladder patch FAILED: field {:#x} ({}) = {:#x} — VM-instruction error {}; the rung aborts before any launch attempt\r\n",
+                    field, vf_name(field), value, err);
+            false
+        }
+    }
 }
 
 /// Fill the current VMCS for one attempt: the shared controls and
 /// host state from `w`, the guest state from `w` + `s`. The write
 /// ORDER and the mid-fill control read-back are exactly what the
-/// mirror attempt has always flown; the bisect flies the same
-/// sequence with only the guest segment block (and GDTR) sourced
-/// from `s` instead of the mirror's derivations.
+/// mirror attempt has always flown, and every ladder rung flies
+/// this identical sequence — a rung's single variable is applied
+/// as a patch AFTER the fill (see vmx_attempt), never by perturbing
+/// the sequence the control rung is compared against.
 fn vmx_fill(f: &mut Fill, w: &VmxWorld, s: &GuestSegs) {
     // Control fields.
     f.w(vf::PIN_CTLS, w.pin_ctls as u64);
@@ -2054,8 +2118,7 @@ fn vmx_fill(f: &mut Fill, w: &VmxWorld, s: &GuestSegs) {
     f.w(vf::G_SYSENTER_EIP, rdmsr(msr_vmx::SYSENTER_EIP));
 }
 
-/// The values a dump actually READ BACK from one attempt's VMCS,
-/// kept so the bisect can diff stored-vs-stored across attempts.
+/// The values a dump actually READ BACK from one attempt's VMCS.
 /// A field maps to Some(value) when its VMREAD succeeded, to
 /// Some(None) when the read was attempted and failed; absence from
 /// the set means the dump never read it.
@@ -2209,6 +2272,27 @@ fn vmx_dump(tag: &str, rec: &WriteRec, stored: &mut Stored) {
     mism += dump_extra(stored, vf::PROC_CTLS2,
                        "never written — secondary controls inactive (primary bit 31 clear)");
     fields += 1;
+    // The load-bit decodes, printed under the verified SDM tables
+    // (VM-entry controls 24.8.1, VM-exit controls 24.7.1 — the
+    // verification record stands in the controls comment in
+    // vmx_first_guest). Annotation lines only: they decode the two
+    // stored control values already judged above and add no field
+    // to the count — but they put on the record, in the open, the
+    // bits the entry will actually act on. In particular: entry
+    // bit 13 (load IA32_PERF_GLOBAL_CTRL) has been CLEAR in every
+    // flown value, so PERF_GLOBAL_CTRL is not loaded at entry —
+    // the fact the shifted table in the ladder brief got wrong —
+    // and entry bit 15 (load IA32_EFER) is the bit ladder R3 sets.
+    if let Some(Some(ev)) = stored.get(vf::ENTRY_CTLS) {
+        sprint!("vmx: dump: entry controls {:#x} decoded (SDM VM-entry controls): load-debug[2]={} ia32e-guest[9]={} load-perf-global[13]={} load-pat[14]={} load-efer[15]={} load-bndcfgs[16]={}\r\n",
+                ev, (ev >> 2) & 1, (ev >> 9) & 1, (ev >> 13) & 1,
+                (ev >> 14) & 1, (ev >> 15) & 1, (ev >> 16) & 1);
+    }
+    if let Some(Some(xv)) = stored.get(vf::EXIT_CTLS) {
+        sprint!("vmx: dump: exit controls {:#x} decoded (SDM VM-exit controls): host-64[9]={} load-perf-global[12]={} save-pat[18]={} load-pat[19]={} save-efer[20]={} load-efer[21]={}\r\n",
+                xv, (xv >> 9) & 1, (xv >> 12) & 1, (xv >> 18) & 1,
+                (xv >> 19) & 1, (xv >> 20) & 1, (xv >> 21) & 1);
+    }
     // The guest scalars, including the non-register trio and the
     // descriptor-table registers.
     for fld in [vf::G_LINK_PTR, vf::G_PAT, vf::G_EFER,
@@ -2264,44 +2348,12 @@ fn vmx_dump(tag: &str, rec: &WriteRec, stored: &mut Stored) {
     }
 }
 
-/// The stored-vs-stored diff between the two attempts' dumps, over
-/// the guest fields only (the control block is one shared world by
-/// construction). One compact line per differing field; when
-/// nothing differs, the line says so — that negative is what
-/// points the next round at the shared block.
-fn vmx_bisect_diff(mirror: &Stored, canon: &Stored) {
-    const GUEST_ALL: [u64; 54] = [
-        vf::G_LINK_PTR, vf::G_PAT, vf::G_EFER, vf::G_DEBUGCTL, vf::G_PERF_GLOBAL,
-        vf::G_CR0, vf::G_CR3, vf::G_CR4, vf::G_DR7, vf::G_RSP, vf::G_RIP,
-        vf::G_RFLAGS, vf::G_INTERRUPTIBILITY, vf::G_ACTIVITY, vf::G_PENDING_DBG,
-        vf::G_SYSENTER_CS, vf::G_SYSENTER_ESP, vf::G_SYSENTER_EIP,
-        vf::G_GDTR_BASE, vf::G_GDTR_LIM, vf::G_IDTR_BASE, vf::G_IDTR_LIM,
-        vf::G_ES_SEL, vf::G_ES_BASE, vf::G_ES_LIM, vf::G_ES_AR,
-        vf::G_CS_SEL, vf::G_CS_BASE, vf::G_CS_LIM, vf::G_CS_AR,
-        vf::G_SS_SEL, vf::G_SS_BASE, vf::G_SS_LIM, vf::G_SS_AR,
-        vf::G_DS_SEL, vf::G_DS_BASE, vf::G_DS_LIM, vf::G_DS_AR,
-        vf::G_FS_SEL, vf::G_FS_BASE, vf::G_FS_LIM, vf::G_FS_AR,
-        vf::G_GS_SEL, vf::G_GS_BASE, vf::G_GS_LIM, vf::G_GS_AR,
-        vf::G_LDTR_SEL, vf::G_LDTR_BASE, vf::G_LDTR_LIM, vf::G_LDTR_AR,
-        vf::G_TR_SEL, vf::G_TR_BASE, vf::G_TR_LIM, vf::G_TR_AR,
-    ];
-    let mut n = 0u32;
-    for fld in GUEST_ALL {
-        if let (Some(Some(a)), Some(Some(b))) = (mirror.get(fld), canon.get(fld)) {
-            if a != b {
-                n += 1;
-                sprint!("vmx: bisect diff: {} — mirror {:#x} vs canonical {:#x}\r\n",
-                        vf_name(fld), a, b);
-            }
-        }
-    }
-    if n == 0 {
-        sprint!("vmx: bisect diff: no guest field differs between the two stored states — if both entries are refused, the refusal lives in the block the attempts share (controls, CRs, EFER, non-register state)\r\n");
-    } else {
-        sprint!("vmx: bisect diff: {} guest field(s) differ between the stored mirror and canonical states (lines above)\r\n",
-                n);
-    }
-}
+/// (vmx_bisect_diff stood here until the ladder round: the
+/// stored-vs-stored diff it printed between the mirror and the
+/// canonical state was run 6's decisive exhibit — 10 differing
+/// fields, all segment/GDTR/TR, refused identically. The ladder
+/// needs no diff: each rung changes one named variable against
+/// the mirror, and its own dump is the comparison.)
 
 /// An Option<u64> that prints as its hex value, or as the plain
 /// fact of the failed read — for the exit-record fields, where the
@@ -2331,8 +2383,8 @@ fn vmx_entry_forensics(tag: &str) {
 }
 
 /// The outcome of one launch sequence. Refused33 is kept distinct
-/// from every other stop because it — and only it — arms the
-/// canonical bisect in the caller.
+/// from every other stop because it — and only it — arms the next
+/// ladder rung in the caller.
 enum Birth {
     Born,
     Refused33,
@@ -2344,12 +2396,12 @@ enum Birth {
 /// the HLT exit. Every path ends in teardown, exactly as the
 /// single-attempt flow always has; the caller learns the outcome
 /// from the return value. `tag` names the attempt in the forensics
-/// line; `canonical` prefixes the attempt's own lines with
-/// "bisect " (the mirror's lines stay byte-identical to the runs
-/// that produced runs 1–5).
-fn vmx_birth(tag: &str, canonical: bool, w: &VmxWorld, vmcs_pa: u64) -> Birth {
+/// line; `p` prefixes the attempt's own lines ("ladder " for the
+/// rungs; the mirror passes "" and its lines stay byte-identical
+/// to the runs that produced runs 1–6). `rung` is 0 for the
+/// mirror and 1-4 for the ladder rungs, and names the born line.
+fn vmx_birth(tag: &str, p: &str, rung: u8, w: &VmxWorld, vmcs_pa: u64) -> Birth {
     const RAX_SENTINEL: u64 = 0x5EED_5EED_5EED_5EED;
-    let p = if canonical { "bisect " } else { "" };
     let mut regs = VmxRegs { rax: RAX_SENTINEL, ..Default::default() };
     sprint!("vmx: {}VMLAUNCH #1 — guest enters at {:#x} (the same 7-byte program as the SVM guest)\r\n",
             p, w.code_pa);
@@ -2417,8 +2469,17 @@ fn vmx_birth(tag: &str, canonical: bool, w: &VmxWorld, vmcs_pa: u64) -> Birth {
         // The attempt is named on the line immediately before
         // GUEST BORN — the verdict keys PROVEN on the GUEST BORN
         // line alone, and reads WHICH state was born off this one.
-        if canonical {
-            sprint!("vmx: born on the canonical bisect state (attempt 2) — the mirror state is still refused; the bisect diff above names the fields where the two stored states differ\r\n");
+        if rung > 0 {
+            // The rung is named with its delta: the delta is the
+            // conviction — it is the ONLY variable in which this
+            // attempt differed from the refused control rung.
+            let delta = match rung {
+                1 => "guest IA32_EFER holding the host's live MSR value (LMA as the host holds it), where the refused mirror carried the constructed LMA-clear field",
+                2 => "the guest SYSENTER trio re-sourced from the host's live MSRs, on top of R1",
+                3 => "the entry itself loading IA32_EFER (SDM bit 15), on top of R1+R2",
+                _ => "entry-controls bit 12 cleared, on top of R1+R2+R3",
+            };
+            sprint!("vmx: born on ladder rung R{} — {}\r\n", rung, delta);
         } else {
             sprint!("vmx: born on the mirror state (attempt 1 — the production path)\r\n");
         }
@@ -2432,20 +2493,67 @@ fn vmx_birth(tag: &str, canonical: bool, w: &VmxWorld, vmcs_pa: u64) -> Birth {
     Birth::Stopped
 }
 
-/// One full VMX attempt: fill, judge the writes, dump the stored
-/// state, launch. The mirror attempt passes the mirror's
-/// GuestSegs and no prior dump; the bisect passes the canonical
-/// GuestSegs and the mirror's stored set, and gets the stored-vs-
-/// stored diff printed between its dump and its launch.
+/// The entry-controls value a ladder rung flies. Rungs 0–2 keep
+/// the world's capability-adjusted value untouched. R3 sets
+/// "load IA32_EFER" — SDM §24.8.1 bit 15 per the verified table
+/// in vmx_first_guest's controls comment — re-adjusted through
+/// the same capability MSR the controls were computed from, so
+/// if this machine's nested VMX does not permit the bit, the
+/// adjustment clears it and the rung's dump shows a degenerate
+/// rung instead of an invalid control field going to VMLAUNCH.
+/// R4 additionally clears bit 12 — the bit with no row in the
+/// §24.8.1 table, present only via the capability adjustment;
+/// the caller has already established it is not must-be-1 on
+/// this machine.
+fn ladder_entry_ctls(w: &VmxWorld, rung: u8) -> u32 {
+    if rung < 3 {
+        return w.entry_ctls;
+    }
+    let mut e = adjust_controls(w.entry_msr, w.entry_ctls | (1 << 15));
+    if rung >= 4 {
+        e &= !(1 << 12);
+    }
+    e
+}
+
+/// One full VMX attempt: fill, judge the writes, apply the
+/// rung's patch (if any), dump the stored state, launch. Rung 0
+/// is the mirror — the control attempt, byte-for-byte the flow
+/// the previous rounds flew. Rungs 1–4 relaunch the mirror with
+/// exactly one shared-block variable changed, cumulatively:
+///   R1: guest IA32_EFER := the host's live IA32_EFER MSR. The
+///       mirror's field is constructed (SCE|LME|NXE, LMA clear)
+///       while the entry is IA-32e mode; with load-EFER clear,
+///       bare-metal entry ignores the field — but KVM manages a
+///       nested guest's EFER actively when it synthesizes vmcs02,
+///       and a stored EFER whose LMA contradicts the IA-32e entry
+///       bit is a live suspect for the synthesized reason 33.
+///       HYPOTHESIS about KVM behaviour, marked as such: the rung
+///       is the empirical test, not the assertion.
+///   R2: + guest SYSENTER CS/ESP/EIP := the host's live
+///       IA32_SYSENTER_* MSRs. The fill already sources these
+///       fields from the same MSRs, so on a machine whose
+///       SYSENTER MSRs read 0 (as run 6's stored zeros prove the
+///       800 G1's do) the patch is value-identical by
+///       construction — the rung's work is to READ the MSRs on
+///       the record and certify the zeros at their source, the
+///       last shared zeros never examined at the source.
+///   R3: + entry controls: load IA32_EFER (SDM bit 15) set, so
+///       the entry itself loads R1's host-true EFER — the
+///       pairing §26.3.1.1's EFER checks then judge: LMA = LME =
+///       IA-32e bit, all 1, from the host's own mouth.
+///   R4: + entry controls: bit 12 cleared (the unnamed,
+///       capability-forced bit; caller verified it is not
+///       must-be-1 on this machine).
 enum Attempt {
     Born,
     Refused33,
     Stopped,
 }
 
-fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, canonical: bool,
-               prior: Option<&Stored>, vmcs_pa: u64, stored: &mut Stored) -> Attempt {
-    let p = if canonical { "bisect " } else { "" };
+fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, rung: u8,
+               vmcs_pa: u64, stored: &mut Stored) -> Attempt {
+    let p = if rung == 0 { "" } else { "ladder " };
     let mut f = Fill::new();
     vmx_fill(&mut f, w, s);
     if f.wfail > 0 {
@@ -2474,22 +2582,62 @@ fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, canonical: bool,
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
         return Attempt::Stopped;
     }
-    if canonical {
-        sprint!("vmx: VMCS filled (bisect: host state = this machine now; guest state = canonical hand-built constants; {} fields written, 0 write failures)\r\n",
-                f.wcount);
-    } else {
+    if rung == 0 {
         sprint!("vmx: VMCS filled (host state = this machine now; guest state = its mirror; {} fields written, 0 write failures)\r\n",
                 f.wcount);
+    } else {
+        sprint!("vmx: ladder VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
+                f.wcount);
     }
-    vmx_dump(if canonical { "canonical bisect" } else { "mirror" }, &f.rec, stored);
-    if canonical {
-        if let Some(prior) = prior {
-            vmx_bisect_diff(prior, stored);
+    // ---- the rung's patch: its single variable, applied after
+    // the fill so the fill's sequence is never perturbed ----
+    if rung >= 1 {
+        sprint!("vmx: ladder patch (R1): guest IA32_EFER {:#x} (as filled) -> {:#x} (the host's live IA32_EFER MSR, read this boot)\r\n",
+                w.guest_efer, w.efer_now);
+        if !f.patch(vf::G_EFER, w.efer_now) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
         }
-        sprint!("vmx: bisect: canonical state\r\n");
     }
-    match vmx_birth(if canonical { "canonical bisect" } else { "mirror" },
-                    canonical, w, vmcs_pa) {
+    if rung >= 2 {
+        let scs = rdmsr(msr_vmx::SYSENTER_CS);
+        let sesp = rdmsr(msr_vmx::SYSENTER_ESP);
+        let seip = rdmsr(msr_vmx::SYSENTER_EIP);
+        sprint!("vmx: ladder patch (R2): host IA32_SYSENTER_CS/ESP/EIP MSRs read {:#x}/{:#x}/{:#x} this boot; guest fields re-written from them (CS through the fill's own 32-bit mask: {:#x})\r\n",
+                scs, sesp, seip, scs & 0xFFFF_FFFF);
+        if !f.patch(vf::G_SYSENTER_CS, scs & 0xFFFF_FFFF)
+            || !f.patch(vf::G_SYSENTER_ESP, sesp)
+            || !f.patch(vf::G_SYSENTER_EIP, seip) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
+        }
+    }
+    if rung >= 3 {
+        let e = ladder_entry_ctls(w, rung);
+        if rung == 3 {
+            sprint!("vmx: ladder patch (R3): entry controls {:#x} -> {:#x} (load IA32_EFER, SDM bit 15, requested, then capability-adjusted through the same MSR)\r\n",
+                    w.entry_ctls, e);
+            if e & (1 << 15) == 0 {
+                sprint!("vmx: ladder patch (R3): NOTE — the capability MSR does not permit entry bit 15 on this machine; the adjusted value carries no load-EFER and this rung's stored entry controls equal R2's. The dump below proves it; read the rung as degenerate, not as an EFER verdict\r\n");
+            }
+        } else {
+            sprint!("vmx: ladder patch (R4): entry controls {:#x} -> {:#x} (R3's load-EFER retained; bit 12 — the unnamed capability-forced bit — cleared)\r\n",
+                    w.entry_ctls, e);
+        }
+        if !f.patch(vf::ENTRY_CTLS, e as u64) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
+        }
+    }
+    let tag = match rung {
+        0 => "mirror",
+        1 => "ladder R1",
+        2 => "ladder R2",
+        3 => "ladder R3",
+        _ => "ladder R4",
+    };
+    vmx_dump(tag, &f.rec, stored);
+    match vmx_birth(tag, p, rung, w, vmcs_pa) {
         Birth::Born => Attempt::Born,
         Birth::Refused33 => Attempt::Refused33,
         Birth::Stopped => Attempt::Stopped,

@@ -270,7 +270,13 @@ BIRTH=""
 SHOW_TAIL=0
 if grep -q 'vmx: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
-  if grep -q 'born on the canonical bisect state' "$LOG"; then
+  if grep -q 'born on ladder rung' "$LOG"; then
+    # Born on a ladder rung: the guest program ran (a birth), and
+    # the rung line names the single shared-block variable whose
+    # change admitted it. Quote the rung line whole — it carries
+    # the rung number and the delta that convicted.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on ladder rung') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on the canonical bisect state' "$LOG"; then
     # Born — but on the bisect's hand-built canonical state, not
     # on the mirror ZCore would actually fly. The guest program
     # ran, which IS a birth; the mirror state is still refused,
@@ -312,6 +318,12 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     # entry, so the refusal lives in the block the two attempts
     # share. Say that, and point at the dumps.
     BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the canonical bisect was also refused: $(line 'vmx: bisect exit #1 reason') — both states refused at entry, so the refusal lives in the block they share (controls, CRs, EFER, non-register state); the read-back dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
+  elif grep -q 'vmx: ladder' "$LOG"; then
+    # The shared-block ladder climbed and no rung entered: each
+    # rung changed exactly one variable against the refused
+    # mirror, so the refusals exonerate that block variable by
+    # variable. Quote ZCore's own closing line for the census.
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the shared-block ladder ran and no rung entered: $(line 'vmx: ladder: no rung entered') — the per-rung read-back dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
   else
     BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME): $(line 'vmx: guest birth FAILED')"
   fi
