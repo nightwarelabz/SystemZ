@@ -1,0 +1,17 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+
+SystemZ loader â M1
+loader: zcore.elf read, bytes=0x0000000000002988
+loader: segment placed at 0x0000000000200000
+loader: segment placed at 0x0000000000201030
+loader: entry=0x0000000000200000 â exiting boot services
+
+SystemZ ZCore — M1 skeleton
+cpu vendor: AuthenticAMD
+max basic cpuid leaf: 0xd
+vmx (intel): false
+svm (amd):   true
+already virtualized: true
+verdict: hardware virtualization present — ZCore can grow here
+zcore: halting (skeleton ends here, on purpose)
