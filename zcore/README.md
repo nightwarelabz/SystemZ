@@ -13,9 +13,10 @@ Rust core those seams attach to.
 - Freestanding entry (`_start`), COM1 serial output, CPU capability
   probe (vendor, VMX, SVM, hypervisor-present) read from CPUID.
 - Builds for `x86_64-unknown-none` with `linker.ld`.
-- **Not yet bootable standalone**: our UEFI loader (../loader/) is what
-  will load and enter it. VMXON, EPT, scheduling, and ZBus do not exist
-  yet and are not claimed.
+- **Boots through our UEFI loader under QEMU/OVMF** — proven
+  2026-10-28, see `proofs/qemu-serial.log` (architecture proof, not a
+  hardware verdict). Physical-hardware boot is still owed. VMXON, EPT,
+  scheduling, and ZBus do not exist yet and are not claimed.
 
 ## Build
 
