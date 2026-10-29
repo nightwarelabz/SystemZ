@@ -12,7 +12,7 @@ LDFLAGS = -nostdlib -mi386pep --subsystem 10 -e efi_main
 BOOTX64.EFI: loader.o
 	$(LD) $(LDFLAGS) -o $@ loader.o
 
-loader.o: loader.c efi.h
+loader.o: loader.c efi.h zboot.h
 	$(CC) $(CFLAGS) -c -o $@ loader.c
 
 clean:

@@ -16,6 +16,7 @@
  * below is where the manifest hand-off will live.
  */
 #include "efi.h"
+#include "zboot.h"
 
 /* ---- ELF64 (the slice we validate and load) ------------------------ */
 
@@ -225,27 +226,68 @@ static uint64_t place_segments(const uint8_t *file, uint64_t file_size) {
     return eh->entry;
 }
 
+static int guid_eq(const efi_guid *a, const efi_guid *b) {
+    const uint8_t *x = (const uint8_t *)a, *y = (const uint8_t *)b;
+    for (int i = 0; i < 16; i++) if (x[i] != y[i]) return 0;
+    return 1;
+}
+
+static uint64_t find_rsdp(void) {
+    for (uint64_t i = 0; i < ST->number_of_table_entries; i++) {
+        if (guid_eq(&ST->configuration_table[i].vendor_guid, &EFI_ACPI_20_TABLE_GUID))
+            return (uint64_t)ST->configuration_table[i].vendor_table;
+    }
+    return 0;
+}
+
 static void exit_and_jump(efi_handle image, uint64_t entry) {
-    uint64_t map_size = 0, map_key = 0, desc_size = 0;
+    /* Reserve the manifest range first (zboot.h): page 0 is the info
+       struct, the following pages receive the memory map itself.
+       These pages are EfiLoaderData: after ExitBootServices they are
+       ZCore's to keep, and ZCore knows the fixed address. */
+    {
+        uint64_t addr = ZBOOT_ADDRESS;
+        efi_status s = BS->allocate_pages(AllocateAddress, EfiLoaderData,
+                                          1 + ZBOOT_MAP_PAGES, &addr);
+        if (EFI_ERROR(s)) die("AllocatePages for boot manifest", s);
+    }
+    zboot_info *info = (zboot_info *)ZBOOT_ADDRESS;
+    uint8_t *map = (uint8_t *)(ZBOOT_ADDRESS + 0x1000);
+    const uint64_t map_cap = ZBOOT_MAP_PAGES * 0x1000ULL;
+
+    uint64_t map_size = map_cap, map_key = 0, desc_size = 0;
     uint32_t desc_ver = 0;
-    BS->get_memory_map(&map_size, NULL, &map_key, &desc_size, &desc_ver);
-    map_size += 8 * desc_size;
-    void *map = NULL;
-    efi_status s = BS->allocate_pool(EfiLoaderData, map_size, &map);
-    if (EFI_ERROR(s)) die("AllocatePool memory map", s);
-    s = BS->get_memory_map(&map_size, map, &map_key, &desc_size, &desc_ver);
-    if (EFI_ERROR(s)) die("GetMemoryMap", s);
+    efi_status s = BS->get_memory_map(&map_size, map, &map_key, &desc_size, &desc_ver);
+    if (EFI_ERROR(s)) die("GetMemoryMap into manifest", s);
+
+    info->magic = ZBOOT_MAGIC;
+    info->version = 1;
+    info->info_size = (uint32_t)sizeof(zboot_info);
+    info->map_address = (uint64_t)map;
+    info->map_size = map_size;
+    info->map_desc_size = desc_size;
+    info->map_desc_version = desc_ver;
+    info->reserved0 = 0;
+    info->rsdp_address = find_rsdp();
+    info->zcore_base = 0x200000;
+    info->zcore_entry = entry;
+
     s = BS->exit_boot_services(image, map_key);
     if (EFI_ERROR(s)) {
         /* One retry with a fresh map; a second failure is fatal. */
+        map_size = map_cap;
         s = BS->get_memory_map(&map_size, map, &map_key, &desc_size, &desc_ver);
         if (EFI_ERROR(s)) die("GetMemoryMap retry", s);
+        info->map_size = map_size;
+        info->map_desc_size = desc_size;
         s = BS->exit_boot_services(image, map_key);
         if (EFI_ERROR(s)) die("ExitBootServices", s);
     }
-    /* Boot services are gone. What speaks next is ZCore, on serial. */
-    typedef void (__attribute__((ms_abi)) *entry_fn)(void);
-    ((entry_fn)entry)();
+    /* Boot services are gone. What speaks next is ZCore, on serial.
+       Entry is System V: the manifest address goes in RDI, which is
+       exactly the first-argument register — declare it plainly. */
+    typedef void (*entry_fn)(uint64_t);
+    ((entry_fn)entry)(ZBOOT_ADDRESS);
     for (;;) { __asm__ volatile ("hlt"); }
 }
 
