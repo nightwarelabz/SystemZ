@@ -43,6 +43,32 @@ the existence of code alone.
   with what VM-instruction error — is exactly what the follow-up
   run exists to answer: the write path is now instrumented
   (per-field failure lines, first-failure error capture, control
-  read-back) after a code audit exonerated the write helper itself
-  (operand order verified against the emitted bytes, `0F 79 C1`).
-  The rerun's log succeeds this one as the witness.
+  read-back). A code audit at the time claimed to exonerate the
+  write helper's operand order against the emitted bytes — that
+  audit was WRONG (it misread the ModRM register field), as the
+  rerun's evidence convicted; see the run-2 entry. The rerun's
+  log succeeds this one as the witness.
+- `vm-serial-2026-10-29-run2.log` — the instrumented rerun (same
+  harness, same machine). VMXON ok, VMCLEAR + VMPTRLD ok, controls
+  computed (pin 0x16, proc 0x40061f2, exit 0x336ffb, entry
+  0x13fb) — and every one of the 57 failing writes fails from the
+  very first; the captured VM-instruction error reads 0 (no valid
+  class was ever recorded — the capture read was itself among the
+  crossed instructions, see below), and the control read-backs are
+  inconsistent (pin controls read back 0x0 "successfully", three
+  sibling control reads fail outright, the post-mortem guest-RIP
+  read returns 0x0). Guest birth still NOT proven; launch never
+  attempted; teardown clean. What this witness convicted, in
+  combination with a corrected byte-level audit: the failure split
+  is exactly value-shaped — all 30 writes carrying value 0
+  "succeeded", all 57 nonzero writes failed — because the
+  VMWRITE/VMREAD helpers and the launch bridge emitted their
+  operands crossed (the field register lands in the value slot
+  and vice versa), so each write executed against field := the
+  intended value (0 → VPID, valid; nonzero → no such field) and
+  the read-backs executed against stale register contents. The
+  crossed templates and bridge lines are fixed and every emitted
+  site re-verified in the rebuilt binary (field register in
+  ModRM.reg at 15/15 VMWRITE/VMREAD sites); the next run on the
+  fixed build is the witness that decides whether the setup now
+  lands and the first launch is reached.

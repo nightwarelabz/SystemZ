@@ -923,12 +923,19 @@ global_asm_vmx!(
     "sub rsp, 8",           // [rsp]: scratch slot (guest RAX stash)
     // HOST_RSP = the RSP at this instant: a VM exit lands exactly
     // here, and a failed launch never changed RSP — both paths agree.
+    // OPERAND ORDER (convicted on bytes, 2026-10-29, run 2): the
+    // assembler puts VMWRITE's FIRST textual operand in ModRM.reg —
+    // the FIELD slot — and the second in r/m, the value slot. The
+    // field register is therefore written FIRST below ("vmwrite
+    // rcx, rax": rcx = field, rax = value). The previous order
+    // executed every bridge write with field and value exchanged;
+    // see the vmwrite_checked comment for the full evidence.
     "mov rax, rsp",
     "mov rcx, 0x6C14",      // HOST_RSP field encoding
-    "vmwrite rax, rcx",
+    "vmwrite rcx, rax",
     "lea rax, [rip + vmx_exit_point]",
     "mov rcx, 0x6C16",      // HOST_RIP field encoding
-    "vmwrite rax, rcx",
+    "vmwrite rcx, rax",
     // Load the guest's GPRs from the regs struct.
     "mov rax, [rsp + 8]",
     "mov rbx, [rax + 8]",
@@ -1387,38 +1394,58 @@ unsafe fn vmxoff() -> (bool, bool) {
 /// VMWRITE with the hardware's verdict read off the flags: success
 /// is CF=0 and ZF=0; CF=1 is VMfailInvalid, ZF=1 is VMfailValid.
 ///
-/// OPERAND ORDER, audited against the emitted bytes (2026-10-29,
-/// after the first KVM run reported 57 failed writes): the template
-/// below compiles to `0F 79 C1` — ModRM.reg holds the FIELD encoding
-/// (RCX, loaded with e.g. 0x4000 immediately before), the r/m operand
-/// holds the VALUE (RAX). That is exactly the hardware contract, and
-/// the launch bridge's hand-written `vmwrite rax, rcx` emits the
-/// identical byte pattern. A swapped helper would show the field and
-/// value registers exchanged in the disassembly; they are not. When
-/// this returns false on a real VMX implementation, the write was
-/// genuinely rejected — the failure is in WHAT was written, or in
-/// the state it was written from, never in this wrapper.
+/// OPERAND ORDER — CONVICTED AND FIXED (2026-10-29, second KVM run;
+/// this comment replaces a first-round audit that misread its own
+/// disassembly and exonerated this wrapper — that audit was wrong).
+/// The hardware contract: ModRM.reg carries the FIELD encoding,
+/// ModRM.r/m carries the VALUE. The assembler, however, puts
+/// VMWRITE's FIRST textual operand in ModRM.reg and the second in
+/// r/m. The old template was written in Intel operand order —
+/// "vmwrite {v}, {f}", value first — so at every emitted site the
+/// register holding the VALUE landed in the field slot and the
+/// register holding the FIELD landed in the value slot: every write
+/// executed with field and value exchanged. Proven from the emitted
+/// bytes, with register provenance, at all four VMWRITE sites of
+/// the pre-fix binary (write closure `0F 79 D6`, RIP-advance
+/// `0F 79 C1`, bridge `0F 79 C1` ×2). The execution evidence agrees
+/// exactly: of the 87 writes in a run, the 57 with nonzero values
+/// "failed" (the value, sitting in the field slot, is not a valid
+/// field encoding) and the 30 with value 0 "succeeded" (field
+/// 0x0000 — VPID — is valid, and absorbed the field encoding as its
+/// value). The template therefore names the FIELD first. Any future
+/// edit here must re-verify the emitted bytes, not the template's
+/// look: in the fixed binary, the register provably loaded with the
+/// field must be the one in ModRM.reg at every site.
 fn vmwrite_checked(field: u64, value: u64) -> bool {
     let cf: u8;
     let zf: u8;
     unsafe {
-        asm!("vmwrite {v}, {f}", "setc {c}", "setz {z}",
+        asm!("vmwrite {f}, {v}", "setc {c}", "setz {z}",
              v = in(reg) value, f = in(reg) field,
              c = out(reg_byte) cf, z = out(reg_byte) zf, options(nostack));
     }
     cf == 0 && zf == 0
 }
 
-/// VMREAD, same audit as vmwrite_checked: emits `0F 78 C8` —
-/// ModRM.reg (RCX) carries the FIELD encoding, the r/m operand (RAX)
-/// receives the value. Correct as written; verified in the binary,
-/// not assumed from the template's look.
+/// VMREAD, the mirror conviction: the hardware contract is the
+/// same (ModRM.reg = FIELD, ModRM.r/m = destination), but the
+/// assembler puts VMREAD's first textual operand in r/m and the
+/// second in ModRM.reg — the opposite textual convention from
+/// VMWRITE. The old template "vmread {f}, {v}" therefore crossed
+/// the operands the same way: the destination register landed in
+/// the field slot (its stale contents became the "field"), which is
+/// why run 2's read-backs were inconsistent — a read executed
+/// against whatever its destination register happened to hold. The
+/// template names the DESTINATION first. Same law as
+/// vmwrite_checked: trust only the emitted bytes (in the fixed
+/// binary, the register loaded with the field constant must sit in
+/// ModRM.reg at every site).
 fn vmread_checked(field: u64) -> Option<u64> {
     let value: u64;
     let cf: u8;
     let zf: u8;
     unsafe {
-        asm!("vmread {f}, {v}", "setc {c}", "setz {z}",
+        asm!("vmread {v}, {f}", "setc {c}", "setz {z}",
              f = in(reg) field, v = out(reg) value,
              c = out(reg_byte) cf, z = out(reg_byte) zf, options(nostack));
     }
