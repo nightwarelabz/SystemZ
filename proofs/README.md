@@ -31,3 +31,18 @@ the existence of code alone.
   in RDI as the only contract (see `loader/zboot.h`). No hardware
   serial log exists yet, and ZCore entry on hardware remains
   unproven; the re-test is owed.
+- `vm-serial-2026-10-29.log` — the first QEMU/KVM run
+  (`tools/vm-test/run-vm.sh` on the HP EliteDesk 800 G1, `-cpu
+  host`, nested VMX exposed): ZCore booted in the VM, consumed the
+  manifest at the firmware-granted address (0x3da6b000 — the
+  AllocateAnyPages fix working outside QEMU/TCG), found real VMX,
+  built the VMCS, computed its controls from the capability MSRs —
+  and was stopped by the VMCS itself: 57 field writes failed,
+  launch never attempted, teardown clean. Guest birth explicitly
+  NOT proven. What the log could not say — which fields failed, and
+  with what VM-instruction error — is exactly what the follow-up
+  run exists to answer: the write path is now instrumented
+  (per-field failure lines, first-failure error capture, control
+  read-back) after a code audit exonerated the write helper itself
+  (operand order verified against the emitted bytes, `0F 79 C1`).
+  The rerun's log succeeds this one as the witness.
