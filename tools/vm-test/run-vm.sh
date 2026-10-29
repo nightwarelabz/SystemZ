@@ -270,7 +270,15 @@ BIRTH=""
 SHOW_TAIL=0
 if grep -q 'vmx: GUEST BORN' "$LOG"; then
   BIRTH="PROVEN in VM"
-  if grep -q 'born on ladder-2 rung' "$LOG"; then
+  if grep -q 'born on ladder rung X1' "$LOG"; then
+    # Born on the reference-state rung: the state that entered
+    # differs from the refused mirror by exactly the seven
+    # deltas to kvm-unit-tests' VMCS recipe (its vmx suite
+    # passes on this stack). The rung line names the recipe;
+    # the x1 patch lines in the log carry each delta's field
+    # and value. Quote the rung line whole.
+    BIRTH_WHY="VMX path: $(line 'vmx: born on ladder rung X1') ($(line 'vmx: GUEST BORN'))"
+  elif grep -q 'born on ladder-2 rung' "$LOG"; then
     # Born on a ladder-2 rung: the variable was in the HOST
     # state or a CONTROL word — the two blocks that had never
     # varied. The rung line names the departure; quote it whole.
@@ -317,7 +325,17 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     12) REASON_NAME="HLT exit — the guest ran but halted before its CPUID; not the birth sequence" ;;
     *)  REASON_NAME="not classified here — the log line itself is the evidence" ;;
   esac
-  if grep -q 'vmx: bisect exit #1 reason' "$LOG"; then
+  if grep -q 'vmx: x1 exit #1 reason' "$LOG"; then
+    # The reference state was refused too: a state matching —
+    # on every axis the extraction found — the VMCS recipe of
+    # kvm-unit-tests' vmx suite, which enters on this stack.
+    # With no L1-visible field value left to separate the two,
+    # the remaining delta is structural (the entry mechanics),
+    # and the dumps in the log are the complete evidence. This
+    # check precedes the ladder branches: an X1 log also
+    # contains both ladders' lines.
+    BIRTH_WHY="first VMX exit: reason ${REASON_N:-?} ($REASON_NAME); the reference state (rung X1 — kvm-unit-tests' VMCS recipe, all seven deltas applied at once) was also refused: $(line 'vmx: x1 exit #1 reason') — no L1-visible field value separates ZCore's state from a recipe that enters on this stack; the remaining delta is structural (entry mechanics), and the dumps in the log are the evidence: $(line 'vmx: guest birth FAILED')"
+  elif grep -q 'vmx: bisect exit #1 reason' "$LOG"; then
     # The mirror's refusal (reason 33) armed the canonical bisect
     # and the bisect was refused too: both stored states failed
     # entry, so the refusal lives in the block the two attempts

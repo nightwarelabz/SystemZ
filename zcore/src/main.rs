@@ -1677,6 +1677,67 @@ fn vmx_first_guest() {
         _ => return,
     }
 
+    // ---- rung X1: the reference state, flown whole ----
+    // Eight runs have exonerated the L1-visible VMCS variable
+    // by variable: the guest block (run 6's bisect), the shared
+    // scalars (ladder-1), the host state and the control words
+    // (ladder-2) — every stored value read back and judged, none
+    // convicted. The question is no longer "which of OUR values
+    // is wrong" but "what does a WORKING recipe do differently"
+    // — and a working recipe exists on this exact stack:
+    // kvm-unit-tests' x86/vmx.flat suite launches nested (L2)
+    // guests successfully under this QEMU/KVM on this machine,
+    // including its MSR-load and activity-state tests. Its VMCS
+    // setup (x86/vmx.c: init_vmcs_ctrl, init_vmcs_host,
+    // init_vmcs_guest) was extracted and diffed against run 8's
+    // read-back dumps; the delta is exactly seven axes —
+    // everything else (guest segment rights and limits, RFLAGS,
+    // activity state, the link pointer, the CRs) is identical.
+    // X1 flies the reference recipe whole, as post-fill patches
+    // on the mirror: if it enters, the conviction lives inside
+    // the seven deltas and the follow-on bisects them one per
+    // run; if it is refused too, no field value separates this
+    // state from one that enters here, and the remaining delta
+    // is structural (the entry mechanics). The ladders below
+    // still climb afterwards, for the record.
+    sprint!("vmx: x1: the mirror is refused — before the ladders climb again, one attempt flies the REFERENCE state whole: the VMCS recipe of kvm-unit-tests' vmx suite, which launches nested guests on this stack, applied to the mirror in a single patch list (seven deltas; the patch lines name each field)\r\n");
+    let x1_pin = adjust_controls(pin_msr, (1 << 0) | (1 << 3) | (1 << 5));
+    let x1_exit = adjust_controls(exit_msr,
+                                  (1 << 9) | (1 << 19) | (1 << 20) | (1 << 21));
+    let x1_entry = adjust_controls(entry_msr, (1 << 9) | (1 << 15));
+    let pat_now = rdmsr(msr_vmx::PAT);
+    let gs_base_now = rdmsr(msr_vmx::GS_BASE);
+    sprint!("vmx: x1: reference sourcing, read this boot: IA32_PAT MSR {:#x} (the host IA32_PAT field takes it — the fill never writes that field — under an exit word that gains load-IA32_PAT); IA32_GS_BASE MSR {:#x} (host and guest GS bases take it — the fill already sources both from this MSR, so a boot where it reads 0 closes that delta by construction); IA32_SYSENTER_CS, guest and host, takes the live CS selector {:#x} — the selector constant the reference writes, NOT the IA32_SYSENTER_CS MSR, which reads 0 on this vCPU and is why ladder R2's MSR re-source could not move the field\r\n",
+            pat_now, gs_base_now, world.cs);
+    sprint!("vmx: x1: reference control requests, capability-adjusted through the same MSRs as the flown words: pin {:#x} -> {:#x} (external-interrupt, NMI and virtual-NMI exiting requested atop the must-be-1 set), exit {:#x} -> {:#x} (load IA32_PAT requested alongside the flown 64-bit-host and EFER save/load bits), entry {:#x} -> {:#x} (load IA32_EFER requested with IA-32e-mode guest)\r\n",
+            world.pin_ctls, x1_pin, world.exit_ctls, x1_exit,
+            world.entry_ctls, x1_entry);
+    let x1_patches: [(u64, u64); 11] = [
+        (vf::G_SYSENTER_CS, world.cs as u64), // delta 1 (guest)
+        (vf::H_SYSENTER_CS, world.cs as u64), // delta 1 (host)
+        (vf::G_DR7, 0),                       // delta 2
+        (vf::G_LDTR_LIM, 0xFFFF),             // delta 3
+        (vf::G_LDTR_AR, 0x82),                // delta 3
+        (vf::ENTRY_CTLS, x1_entry as u64),    // delta 4
+        (vf::EXIT_CTLS, x1_exit as u64),      // delta 5
+        (vf::H_PAT, pat_now),                 // delta 5
+        (vf::PIN_CTLS, x1_pin as u64),        // delta 6
+        (vf::H_GS_BASE, gs_base_now),         // delta 7
+        (vf::G_GS_BASE, gs_base_now),         // delta 7
+    ];
+    if !vmx_reenter(adj_cr0, adj_cr4, vmxon_pa, revision, vmcs_pa,
+                    orig_cr0, orig_cr4) {
+        return;
+    }
+    let mut stored_x1 = Stored::new();
+    match vmx_attempt_x1(&world, &mirror, &x1_patches, vmcs_pa,
+                         &mut stored_x1) {
+        Attempt::Refused33 => {
+            sprint!("vmx: x1: the reference state was refused at entry too (reason 33) — the L1-visible state now matches, on every axis the extraction found, a recipe that enters on this stack; the remaining delta is structural (the launch bridge, the VMCS-region handling, the entry mechanics), and that is the next front. The ladders below still climb for the record\r\n");
+        }
+        _ => return,
+    }
+
     // ---- the ladder: the shared block, one variable at a time ----
     // Run 6's canonical bisect varied the entire segment block at
     // once and was refused identically, which exonerated the
@@ -2557,8 +2618,16 @@ fn vmx_dump(tag: &str, rec: &WriteRec, stored: &mut Stored) {
         mism += dump_host_sel(rec, stored, hnames[i], hsel_f[i]);
         fields += 1;
     }
-    mism += dump_extra(stored, vf::H_PAT,
-                       "never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record");
+    // HOST IA32_PAT is judged whenever the attempt actually
+    // wrote it (the reference-state rung X1 writes it, under an
+    // exit word carrying load-IA32_PAT); on every other attempt
+    // it stays a for-the-record extra, as before.
+    if rec.get(vf::H_PAT).is_some() {
+        mism += dump_scalar(rec, stored, vf::H_PAT);
+    } else {
+        mism += dump_extra(stored, vf::H_PAT,
+                           "never written — the exit controls' save/load IA32_PAT bits (exit 18/19) are both clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record");
+    }
     mism += dump_extra(stored, vf::H_PERF_GLOBAL,
                        "never written — the exit controls' load IA32_PERF_GLOBAL_CTRL bit (exit 12) is clear in the flown controls, so no entry check judges it; VMCLEAR's leftover, for the record");
     // HOST_RSP (0x6C14) / HOST_RIP (0x6C16): encodings owned by
@@ -2713,7 +2782,17 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
         // The attempt is named on the line immediately before
         // GUEST BORN — the verdict keys PROVEN on the GUEST BORN
         // line alone, and reads WHICH state was born off this one.
-        if kind == 2 {
+        if kind == 3 {
+            // The reference state entered: a state whose every
+            // delta from the refused mirror is a line of another
+            // implementation's recipe — kvm-unit-tests' vmx
+            // suite, which passes on this stack. The conviction
+            // is therefore somewhere inside the seven deltas the
+            // rung applied at once; the follow-on bisects them
+            // down one per run. The rung's patch lines above
+            // carry each delta's field and value.
+            sprint!("vmx: born on ladder rung X1 (reference state)\r\n");
+        } else if kind == 2 {
             // Ladder-2's rungs depart from the mirror ALONE (no
             // accumulation): the delta names the single departure
             // this attempt flew, and the rung's patch lines above
@@ -2974,6 +3053,84 @@ fn vmx_attempt_h(w: &VmxWorld, s: &GuestSegs, hrung: u8,
     };
     vmx_dump(tag, &f.rec, stored);
     match vmx_birth(tag, p, 2, hrung, w, vmcs_pa) {
+        Birth::Born => Attempt::Born,
+        Birth::Refused33 => Attempt::Refused33,
+        Birth::Stopped => Attempt::Stopped,
+    }
+}
+
+/// The reference-state attempt (rung X1): the same fill, the
+/// same dump, the same birth sequence as every attempt — with
+/// the caller's patch list applied after the fill. Where the
+/// ladders each change ONE variable against the refused mirror,
+/// X1 changes SEVEN at once, deliberately: every axis on which
+/// a working reference recipe — kvm-unit-tests' x86/vmx.c
+/// (init_vmcs_ctrl / init_vmcs_host / init_vmcs_guest), whose
+/// nested guests launch successfully on this very stack —
+/// differs from the mirror's stored state, as extracted field
+/// by field against run 8's dumps. The deltas, in the order the
+/// caller lists them:
+///
+///   1. guest + host IA32_SYSENTER_CS := the live CS selector
+///      (the reference writes its kernel CS constant; the fill
+///      sources the field from the IA32_SYSENTER_CS MSR, which
+///      reads 0 on this vCPU — the value ladder R2 certified at
+///      its source without ever changing it).
+///   2. guest DR7 := 0 (the mirror flies the host's live DR7,
+///      0x400 in every run so far).
+///   3. guest LDTR := the usable LDT form — selector 0, base 0
+///      (both already the fill's), limit 0xFFFF, access rights
+///      0x82 (type 2 = LDT, present). The fill flies the
+///      unusable form (limit 0, AR 0x10000) the host's null
+///      LDTR derives.
+///   4. entry controls := load-IA32_EFER | IA-32e-mode guest,
+///      capability-adjusted (the reference's request; ladder
+///      R3 flew load-EFER too, but with deltas 1–3 and 5–7
+///      absent — the combination is what is on trial here).
+///   5. exit controls := the flown request + load-IA32_PAT,
+///      capability-adjusted, and host IA32_PAT := the live
+///      IA32_PAT MSR (the fill never writes that field at all).
+///   6. pin controls := external-interrupt, NMI and
+///      virtual-NMI exiting requested atop the must-be-1 set,
+///      capability-adjusted (the mirror flies the must-be-1
+///      residue alone, 0x16 in every run).
+///   7. host + guest GS base := the live IA32_GS_BASE MSR. The
+///      fill already sources both fields from this MSR, so on a
+///      boot where it reads 0 the two patches are value-
+///      identical by construction and the dump proves it — the
+///      delta's sourcing is honoured and its value, on this
+///      machine, is the one already flown.
+///
+/// If X1 enters, the seven deltas hold the conviction between
+/// them and the follow-on bisects them one per run. If X1 is
+/// refused too, no L1-visible field value separates ZCore's
+/// state from a recipe that enters on this stack, and the
+/// delta is structural — the launch bridge and entry
+/// mechanics — which is where the hunt goes next.
+fn vmx_attempt_x1(w: &VmxWorld, s: &GuestSegs, patches: &[(u64, u64)],
+                  vmcs_pa: u64, stored: &mut Stored) -> Attempt {
+    let p = "x1 ";
+    let mut f = Fill::new();
+    vmx_fill(&mut f, w, s);
+    if vmx_wfail_abort(p, &f, w, vmcs_pa) {
+        return Attempt::Stopped;
+    }
+    sprint!("vmx: x1 VMCS filled (host state = this machine now; guest state = its mirror, reference-state patches follow; {} fields written, 0 write failures)\r\n",
+            f.wcount);
+    for &(field, value) in patches {
+        match f.rec.get(field) {
+            Some(old) => sprint!("vmx: x1 patch: {} {:#x} (as filled) -> {:#x}\r\n",
+                                 vf_name(field), old, value),
+            None => sprint!("vmx: x1 patch: {} — never written by the fill (VMCLEAR's leftover stands there) -> {:#x}\r\n",
+                            vf_name(field), value),
+        }
+        if !f.patch(field, value) {
+            vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+            return Attempt::Stopped;
+        }
+    }
+    vmx_dump("reference X1", &f.rec, stored);
+    match vmx_birth("reference X1", p, 3, 0, w, vmcs_pa) {
         Birth::Born => Attempt::Born,
         Birth::Refused33 => Attempt::Refused33,
         Birth::Stopped => Attempt::Stopped,

@@ -217,3 +217,45 @@ the existence of code alone.
   exit / entry control words reduced to its capability floor
   — plus one combined rung, stopping at the first that
   enters. Guest birth still NOT proven.
+- `vm-serial-2026-10-29-run8.log` — the host-state run
+  (same harness, same machine, the host-dump + ladder-2
+  build). The dumps grew to **70 fields** — the host state
+  read back for the first time (CRs, the SYSENTER trio,
+  EFER, the MSR bases, the GDTR/IDTR/TR bases, all seven
+  selectors decoded index/TI/RPL on the line, and
+  HOST_RSP/RIP read in the entry forensics as flown) —
+  and every attempt stored **70/70 as written**. The
+  KVM-source audit (Linux master nested.c, read in full)
+  rendered its routing verdict: host-state and controls
+  check failures return VMfailValid (error 8), a shape no
+  run has ever shown, so reason 33 routes only through
+  the guest-state check, prepare_vmcs02, or the hardware
+  checks on vmcs02. Ladder-2 then varied what seven runs
+  never had: **H1** (host data selectors nulled —
+  refused), **H3** (exit controls at their capability
+  floor, the EFER save/load pair off — refused), **H5**
+  (the two combined — refused); **H2 and H4 did not
+  launch** — the flown proc and entry words already equal
+  their capability floors on this machine, leaving no
+  variable to change. The host state and the control
+  words now stand varied or exonerated beside everything
+  else. Two environment facts close the ring from the
+  other side (the parent's manual variant runs, recorded
+  here so the record is complete): the refusal is
+  **invariant across CPU models and chipsets** — qemu64
+  with +vmx, Haswell with +vmx, and -machine pc all exit
+  reason 33 on the same code — and **KVM nested entry
+  works on this stack**: kvm-unit-tests' x86/vmx.flat
+  suite, run on this EliteDesk under this QEMU/KVM
+  (kernel 7.3.0-10), passes its nested L2 launches,
+  including the MSR-load and activity-state tests. A
+  working reference therefore exists, and its VMCS
+  recipe (x86/vmx.c: init_vmcs_ctrl / init_vmcs_host /
+  init_vmcs_guest) diffs against this log's dumps on
+  exactly seven axes — guest and host SYSENTER_CS, guest
+  DR7, the guest LDTR form, the entry load-EFER request,
+  the exit load-PAT request beside a written HOST_PAT,
+  the pin-control request bits, and the GS-base
+  sourcing. The next build flies that reference state
+  whole, as one rung (X1) between the mirror and the
+  ladders. Guest birth still NOT proven.
