@@ -375,3 +375,36 @@ the existence of code alone.
   VMX on this machine's KVM; bare metal remains the final
   witness, and the SVM twin's birth remains unproven
   (no AMD/KVM witness exists yet).
+- `vm-serial-2026-10-30-run12.log` — the first EPT-wired
+  run (same harness, same machine; SystemZ main @ PR #24,
+  `run-vm.sh --ept-wire`, a build run: the loader knob set
+  `SZ_EPT_WIRE=1` and the v3 boot manifest carried the
+  harness flag). The EPT groundwork verified itself
+  (`ept: self-check PASS` — 261920 RAM pages expected by
+  the rule, 261920 page-equivalents found, 5909 present
+  leaves, 0 mismatches) and published its candidate; the
+  mirror attempt then flew wired: `vmx: ept patch: EPTP
+  0x3ba01e written (build_ept's verified candidate);
+  secondary controls 0x2 (enable EPT); primary controls
+  0x40061f2 -> 0x840061f2 (activate secondary controls)` —
+  the flown words carry secondary bit 1 and primary bit 31
+  exactly. VMLAUNCH entered, and exit #1 was reason 48
+  (EPT violation) at guest RIP 0x20e740 with guest rax
+  still the 0x5eed5eed5eed5eed poison — the guest executed
+  no instruction. The exit qualification, 0x19c, decodes
+  as an instruction fetch (bit 2) against an entry
+  carrying read and write but no execute (bits 3 and 4
+  set, bit 5 clear), caused by an EPT translation (bit 8).
+  Per the phase-2 posture the attempt ended there:
+  recorded with its forensics, torn down, never resumed —
+  no silent loop. Verdict, in the harness's own words:
+  `ept wired: WIRED this run`, `guest birth: NOT proven`.
+  This is a wired attempt whose verdict is the tables':
+  the wiring is proven live (EPTP written, controls armed,
+  entry made, tables consumed) and a birth under EPT is
+  NOT claimed. The fault is in the table construction's
+  execute permission on the fetch side, not in the wiring;
+  that repair is the next EPT step. Proof class unchanged:
+  nested VMX on this machine's KVM; bare metal remains the
+  final witness, and the SVM twin's birth remains unproven
+  (no AMD/KVM witness exists yet).
