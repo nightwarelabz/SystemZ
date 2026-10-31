@@ -595,6 +595,15 @@ universal claim gets proven — never a profile the system is built for.
 
 ## 19. Boot sequence (normative sketch)
 
+Boot presentation runs in the loader and continues through the framebuffer
+descriptor in the versioned boot manifest. Progress follows completed
+operations; errors remain visible, and unsupported graphics retains text
+and serial diagnostics. At the current early-core boundary, the splash
+hands over to the implemented ZCore diagnostic view. It must not declare
+the operator console, a trial generation, or the full boot healthy before
+those components and health contracts exist. See `boot/README.md` for the
+current implementation, ABI and emulator witnesses.
+
 1. Firmware (Secure Boot, operator keys) verifies our UEFI loader.
 2. Loader reads the boot policy: which generation is *current*, which
    (if any) is on *trial*.

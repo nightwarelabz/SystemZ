@@ -50,6 +50,11 @@ unsigned.
 
 ## Build
 
+The loader now draws the live [SystemZ boot splash](../boot/README.md),
+with a GOP framebuffer handoff in manifest v2. Graphics has text/serial
+fallback, and Escape selects firmware boot details. The same renderer
+continues in ZCore after firmware services end.
+
 ```sh
 make            # produces BOOTX64.EFI (PE32+ EFI application)
 ```
