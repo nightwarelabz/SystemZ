@@ -30,6 +30,7 @@
 use core::arch::asm;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
+mod boot_screen;
 
 // ---------------------------------------------------------------- serial
 
@@ -140,6 +141,48 @@ struct ZBootInfo {
     rsdp_address: u64,
     zcore_base: u64,
     zcore_entry: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<ZBootInfo>() == 72);
+
+// Manifest v2 boot graphics: if this manifest is a valid v2, hand its
+// framebuffer value to the boot screen. Silent on every failure path —
+// with graphics absent, the boot (serial included) is byte-identical
+// to the pre-splash one; the splash only ever adds a channel.
+fn attach_boot_screen(manifest_addr: u64) -> bool {
+    if manifest_addr == 0 { return false; }
+    let info = unsafe { &*(manifest_addr as *const ZBootInfo) };
+    if info.magic != ZBOOT_MAGIC || info.version != 2 || info.info_size < 128 {
+        return false;
+    }
+    let graphics = unsafe {
+        &*((manifest_addr + core::mem::size_of::<ZBootInfo>() as u64)
+            as *const boot_screen::Graphics)
+    };
+    if boot_screen::attach(graphics) {
+        sprint!("zboot: framebuffer accepted {}x{} stride {} format {}\r\n",
+                graphics.framebuffer.width, graphics.framebuffer.height,
+                graphics.framebuffer.stride, graphics.framebuffer.format);
+        true
+    } else {
+        false
+    }
+}
+
+// ---------------------------------------------------------------- guest outcomes
+// The diagnostics hand-off (boot_screen::finish) reports what the
+// guest machinery actually did. Outcomes are recorded at the
+// machinery's existing verdict points — the same points that print
+// the serial verdicts — so the screen can never claim more than the
+// serial log said. Recording changes no serial output and no
+// execution decision.
+
+#[derive(Clone, Copy, PartialEq)]
+enum GuestOutcome {
+    Born,
+    NotEntered,
+    Failed,
+    Incomplete,
 }
 
 fn report_memory(info: &ZBootInfo) {
@@ -354,7 +397,7 @@ fn vmcb_seg(off: usize, selector: u16, attrib: u16, limit: u32, base: u64) {
 const EXIT_CPUID: u64 = 0x72;
 const EXIT_HLT: u64 = 0x78;
 
-fn svm_first_guest(manifest_addr: u64) {
+fn svm_first_guest(manifest_addr: u64) -> GuestOutcome {
     build_npt(manifest_addr);
 
     sprint!("svm: enabling SVM (EFER.SVME + host save area)...\r\n");
@@ -436,11 +479,11 @@ fn svm_first_guest(manifest_addr: u64) {
         // RIP untouched — its VMRUN is a no-op. Say so plainly; the
         // birth proof belongs on hardware or a KVM host (SPEC SS18).
         sprint!("svm: guest birth NOT CLAIMED here — VMRUN did not enter in this environment (emulated VMRUN is a no-op); the machinery is complete and awaits a capable host\r\n");
-        return;
+        return GuestOutcome::NotEntered;
     }
     if exit1 != EXIT_CPUID {
         sprint!("svm: guest birth FAILED at first exit\r\n");
-        return;
+        return GuestOutcome::Failed;
     }
 
     // Emulate CPUID leaf 0 the way an AMD part answers it, ourselves:
@@ -459,8 +502,10 @@ fn svm_first_guest(manifest_addr: u64) {
     if exit2 == EXIT_HLT {
         sprint!("svm: GUEST BORN — ran, took our emulated cpuid (rax={:#x} rbx={:#x}), halted back to ZCore\r\n",
                 vmcb_r64(voff::RAX), regs.rbx);
+        GuestOutcome::Born
     } else {
         sprint!("svm: guest birth incomplete — second exit was not HLT\r\n");
+        GuestOutcome::Incomplete
     }
 }
 
@@ -2823,6 +2868,39 @@ enum Birth {
     Stopped,
 }
 
+// The best VMX outcome across every attempt this boot — the mirror
+// and all ladder rungs funnel through vmx_birth, which records at
+// its verdict returns (see vmx_record). Ranked so a birth anywhere
+// outranks every refusal; among non-births, an entry that was
+// refused or failed outranks one that never entered, which outranks
+// an entry that entered but did not finish.
+static mut VMX_OUTCOME: u8 = 0; // 0 none, 1 not entered, 2 incomplete, 3 failed, 4 born
+
+fn vmx_record(b: Birth, outcome: GuestOutcome) -> Birth {
+    let rank = match outcome {
+        GuestOutcome::NotEntered => 1,
+        GuestOutcome::Incomplete => 2,
+        GuestOutcome::Failed => 3,
+        GuestOutcome::Born => 4,
+    };
+    unsafe {
+        if rank > VMX_OUTCOME { VMX_OUTCOME = rank; }
+    }
+    b
+}
+
+fn vmx_guest_outcome() -> GuestOutcome {
+    match unsafe { VMX_OUTCOME } {
+        4 => GuestOutcome::Born,
+        3 => GuestOutcome::Failed,
+        2 => GuestOutcome::Incomplete,
+        1 => GuestOutcome::NotEntered,
+        // VMX present but no launch was ever reached (setup failed
+        // before vmx_birth): initialization failed, honestly.
+        _ => GuestOutcome::Failed,
+    }
+}
+
 /// The birth sequence for one attempt: VMLAUNCH the 7-byte guest,
 /// judge the first exit, emulate its CPUID, VMRESUME, and require
 /// the HLT exit. Every path ends in teardown, exactly as the
@@ -2846,13 +2924,13 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
         sprint!("vmx: {}VMLAUNCH FAILED — VMfailValid, VMCS instruction error {} (read back, not guessed); no guest ran\r\n",
                 p, err);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Stopped;
+        return vmx_record(Birth::Stopped, GuestOutcome::Failed);
     }
     if regs.flag_zf != 0 {
         sprint!("vmx: {}VMLAUNCH FAILED — VMfailInvalid (no current VMCS or VMCS misconfigured); no guest ran\r\n",
                 p);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Stopped;
+        return vmx_record(Birth::Stopped, GuestOutcome::Failed);
     }
     let reason = vmread_checked(vf::EXIT_REASON).unwrap_or(0) & 0xFFFF;
     let guest_rip = vmread_checked(vf::G_RIP).unwrap_or(0);
@@ -2868,13 +2946,14 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
                 p);
         vmx_entry_forensics(tag);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Stopped;
+        return vmx_record(Birth::Stopped, GuestOutcome::NotEntered);
     }
     if reason != VMX_EXIT_REASON_CPUID {
         sprint!("vmx: {}guest birth FAILED at first exit (reason {})\r\n", p, reason);
         vmx_entry_forensics(tag);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return if reason == 33 { Birth::Refused33 } else { Birth::Stopped };
+        return vmx_record(if reason == 33 { Birth::Refused33 } else { Birth::Stopped },
+                          GuestOutcome::Failed);
     }
 
     // Emulate CPUID leaf 0 the way an Intel part answers it:
@@ -2886,7 +2965,7 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
     if !vmwrite_checked(vf::G_RIP, guest_rip + 2) {
         sprint!("vmx: {}could not advance guest RIP past CPUID — birth incomplete\r\n", p);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Stopped;
+        return vmx_record(Birth::Stopped, GuestOutcome::Incomplete);
     }
     sprint!("vmx: {}cpuid emulated (leaf 0 -> GenuineIntel), VMRESUME #2\r\n", p);
     regs.resume = 1;
@@ -2896,7 +2975,7 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
         sprint!("vmx: {}VMRESUME FAILED (cf {} zf {}, instruction error {}) — birth incomplete\r\n",
                 p, regs.flag_cf, regs.flag_zf, err);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Stopped;
+        return vmx_record(Birth::Stopped, GuestOutcome::Incomplete);
     }
     let reason2 = vmread_checked(vf::EXIT_REASON).unwrap_or(0) & 0xFFFF;
     sprint!("vmx: {}exit #2 reason {}\r\n", p, reason2);
@@ -2962,11 +3041,11 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
         sprint!("vmx: GUEST BORN — ran, took our emulated cpuid (rax={:#x} rbx={:#x}), halted back to ZCore\r\n",
                 regs.rax, regs.rbx);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-        return Birth::Born;
+        return vmx_record(Birth::Born, GuestOutcome::Born);
     }
     sprint!("vmx: {}guest birth incomplete — second exit was not HLT\r\n", p);
     vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
-    Birth::Stopped
+    vmx_record(Birth::Stopped, GuestOutcome::Incomplete)
 }
 
 /// The entry-controls value a ladder rung flies. Rungs 0–2 keep
@@ -3456,8 +3535,11 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
     unsafe { Serial::init() };
 
     sprint!("\r\nSystemZ ZCore — M1 skeleton\r\n");
+    let graphics = attach_boot_screen(manifest_addr);
+    boot_screen::step(6, b"ZCORE ENTERED - PROBING PROCESSOR\0");
 
     let caps = probe();
+    boot_screen::step(7, b"PROCESSOR PROBED - READING BOOT MANIFEST\0");
     let vendor = core::str::from_utf8(&caps.vendor).unwrap_or("<non-utf8>");
     sprint!("cpu vendor: {}\r\n", vendor);
     sprint!("max basic cpuid leaf: {:#x}\r\n", caps.max_basic_leaf);
@@ -3485,14 +3567,49 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
         sprint!("zboot: no manifest (entered without the loader)\r\n");
     }
 
-    if caps.svm {
-        svm_first_guest(manifest_addr);
-    }
+    boot_screen::step(8, b"MEMORY MAP REPORTED - CHECKING GUEST EXECUTION\0");
+    let svm_guest = if caps.svm {
+        Some(svm_first_guest(manifest_addr))
+    } else {
+        None
+    };
 
-    if caps.vmx {
+    let vmx_guest = if caps.vmx {
         vmx_first_guest(manifest_addr);
+        Some(vmx_guest_outcome())
     } else {
         vmx_readiness_absent();
+        None
+    };
+    boot_screen::step(9, b"EARLY BOOT CHECKS FINISHED - OPENING DIAGNOSTICS\0");
+
+    let cpu: &'static [u8] = if caps.svm { b"CPU: AMD SVM PRESENT\0" }
+        else if caps.vmx { b"CPU: INTEL VMX PRESENT\0" }
+        else { b"CPU: HARDWARE VIRTUALIZATION ABSENT\0" };
+    let (guest_line, result): (&'static [u8], &'static [u8]) = if caps.svm { match svm_guest {
+        Some(GuestOutcome::Born) => (b"SVM GUEST: EXECUTED CPUID / HLT\0",
+                                   b"FIRST GUEST PROVEN - EARLY CORE BOUNDARY\0"),
+        Some(GuestOutcome::NotEntered) => (b"SVM GUEST: DID NOT ENTER - BIRTH NOT CLAIMED\0",
+                                        b"GUEST PROOF REQUIRES A CAPABLE HOST\0"),
+        Some(GuestOutcome::Failed) => (b"SVM GUEST: FIRST EXIT FAILED\0",
+                                    b"GUEST EXECUTION FAILED - SEE COM1\0"),
+        Some(GuestOutcome::Incomplete) => (b"SVM GUEST: SECOND EXIT WAS NOT HLT\0",
+                                        b"GUEST EXECUTION INCOMPLETE - SEE COM1\0"),
+        None => (b"GUEST: UNAVAILABLE\0", b"UNSUPPORTED CPU - SYSTEMZ CANNOT START\0"),
+    }} else { match vmx_guest {
+        Some(GuestOutcome::Born) => (b"VMX GUEST: EXECUTED CPUID / HLT\0",
+                                   b"FIRST GUEST PROVEN - EARLY CORE BOUNDARY\0"),
+        Some(GuestOutcome::NotEntered) => (b"VMX GUEST: DID NOT ENTER - BIRTH NOT CLAIMED\0",
+                                        b"CHECK COM1 FOR VMX READINESS DETAILS\0"),
+        Some(GuestOutcome::Failed) => (b"VMX GUEST: INITIALIZATION OR FIRST EXIT FAILED\0",
+                                    b"GUEST EXECUTION FAILED - SEE COM1\0"),
+        Some(GuestOutcome::Incomplete) => (b"VMX GUEST: EXECUTION INCOMPLETE\0",
+                                        b"GUEST EXECUTION INCOMPLETE - SEE COM1\0"),
+        None => (b"GUEST: UNAVAILABLE\0", b"UNSUPPORTED CPU - SYSTEMZ CANNOT START\0"),
+    }};
+    boot_screen::finish(cpu, guest_line, result);
+    if graphics {
+        sprint!("splash: diagnostics handoff complete (operator shell not implemented)\r\n");
     }
 
     sprint!("zcore: halting (skeleton ends here, on purpose)\r\n");
@@ -3503,6 +3620,7 @@ pub extern "C" fn _start(manifest_addr: u64) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    boot_screen::panic_screen();
     sprint!("\r\nZCORE PANIC: {}\r\n", info);
     loop {
         unsafe { asm!("hlt", options(nostack)) };

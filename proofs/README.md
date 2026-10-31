@@ -4,10 +4,14 @@ Every milestone in SPEC.md §21 exits on a proof recorded here — a
 hardware census, a flight-recorder log, a break-and-heal run — never on
 the existence of code alone.
 
-- `M0-hardware-census.md` — owed: a physical x86_64 machine's census,
-  produced by `tools/m0-census/m0-census.sh` on real hardware. Any
-  qualifying machine serves (SPEC.md §17): the census proves the
-  architecture's requirements, not a machine model.
+- `M0-hardware-census.md` — a physical x86_64 machine's census,
+  produced by `tools/m0-census/m0-census.sh` on the HP EliteDesk
+  800 G1 (2026-10-30, run over SSH): Intel Core i5-4590, VMX and
+  EPT present, TPM 1.x present, UEFI (Secure Boot disabled),
+  15 GiB RAM. One open input: IOMMU groups read 0 with no DMAR
+  in that boot's kernel log. Any qualifying machine serves
+  (SPEC.md §17): the census proves the architecture's
+  requirements, not a machine model.
 - `qemu-serial.log` — the full boot chain under QEMU/OVMF (our
   loader → ZCore ELF → banner, verdict, boot-manifest report, NPT
   build + self-check census, SVM attempt, VMX readiness block),
@@ -361,3 +365,13 @@ the existence of code alone.
   a BORN configuration. The SVM twin's birth remains
   unproven: TCG's VMRUN is a no-op and no AMD/KVM
   witness exists yet.
+- `vm-serial-2026-10-29-run11.log` — the confirmation run
+  (same harness, same machine): with the PR #21 fix as the
+  default construction — guest CR4 sourced from the live
+  CR4 read, VMXE standing — the guest was **born on the
+  mirror state, attempt 1: the production path**, no
+  ladder rung needed. The VMX guest-birth arc (runs 1–11)
+  is closed. Proof class unchanged: a birth under nested
+  VMX on this machine's KVM; bare metal remains the final
+  witness, and the SVM twin's birth remains unproven
+  (no AMD/KVM witness exists yet).

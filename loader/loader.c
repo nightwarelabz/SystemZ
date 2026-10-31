@@ -13,7 +13,9 @@
  * What it does NOT do yet (future PRs, in the spec's own order):
  * generation seals, TPM measurement, trial generations. The boot
  * manifest (zboot.h) IS built and handed off today — its address is
- * passed to ZCore's entry in RDI at the jump below.
+ * passed to ZCore's entry in RDI at the jump below. Manifest v2 also
+ * carries a validated framebuffer value for the live boot splash
+ * (boot/splash.c, the renderer ZCore continues after hand-off).
  */
 #include "efi.h"
 #include "zboot.h"
@@ -53,8 +55,36 @@ typedef struct {
 
 static efi_system_table *ST;
 static efi_boot_services *BS;
+static sz_framebuffer splash_fb;
+static uint32_t splash_step, splash_frame;
+static int splash_enabled, boot_services_live = 1;
+
+/* A short reveal is visual animation, never simulated initialization.
+ * Set to zero at build time for the shortest possible boot path. */
+#ifndef SZ_BOOT_REVEAL_FRAMES
+#define SZ_BOOT_REVEAL_FRAMES 12
+#endif
+
+static void serial_byte(uint8_t value) {
+    uint8_t ready = 0;
+    for (uint32_t i = 0; i < 10000; i++) {
+        __asm__ volatile ("inb %1, %0" : "=a"(ready) : "Nd"((uint16_t)0x3fd));
+        if (ready & 0x20) break;
+    }
+    if (ready & 0x20)
+        __asm__ volatile ("outb %0, %1" :: "a"(value), "Nd"((uint16_t)0x3f8));
+}
+
+static void serial_init(void) {
+    const uint16_t ports[] = {0x3f9,0x3fb,0x3f8,0x3f9,0x3fb,0x3fa,0x3fc};
+    const uint8_t values[] = {0,0x80,1,0,3,0xc7,0x0b};
+    for (uint32_t i = 0; i < 7; i++)
+        __asm__ volatile ("outb %0, %1" :: "a"(values[i]), "Nd"(ports[i]));
+}
 
 static void print(const char *ascii) {
+    for (size_t j = 0; ascii[j]; j++) serial_byte((uint8_t)ascii[j]);
+    if (splash_enabled || !boot_services_live || !ST->con_out) return;
     efi_char16 buf[256];
     size_t i = 0;
     for (; ascii[i] && i < 255; i++) buf[i] = (efi_char16)(uint8_t)ascii[i];
@@ -74,12 +104,58 @@ static void print_hex(uint64_t v) {
 }
 
 static void die(const char *what, efi_status s) {
+    if (splash_enabled)
+        sz_splash_draw(&splash_fb, splash_step, splash_frame, what, SZ_SPLASH_ERROR, s);
     print("loader: FAILED — ");
     print(what);
     print(" status=");
     print_hex(s);
     print("\r\nloader: halting.\r\n");
     for (;;) { __asm__ volatile ("hlt"); }
+}
+
+static void splash_poll_key(void) {
+    if (!splash_enabled || !boot_services_live || !ST->con_in ||
+        !ST->con_in->read_key_stroke) return;
+    efi_input_key key;
+    if (!EFI_ERROR(ST->con_in->read_key_stroke(ST->con_in, &key)) &&
+        (key.scan_code == 0x17 || key.unicode_char == 27)) {
+        splash_enabled = 0;
+        if (ST->con_out && ST->con_out->clear_screen)
+            ST->con_out->clear_screen(ST->con_out);
+        print("SystemZ: firmware boot details (full log also on COM1)\r\n");
+    }
+}
+
+static void splash_update(uint32_t completed, const char *message) {
+    splash_step = completed;
+    splash_poll_key();
+    if (splash_enabled)
+        sz_splash_draw(&splash_fb, completed, splash_frame++, message, SZ_SPLASH_LOADING, 0);
+}
+
+static void splash_init(void) {
+    efi_gop *gop = NULL;
+    efi_status s = BS->handle_protocol(ST->console_out_handle, &EFI_GOP_GUID, (void **)&gop);
+    if (EFI_ERROR(s) || !gop)
+        s = BS->locate_protocol(&EFI_GOP_GUID, NULL, (void **)&gop);
+    if (EFI_ERROR(s) || !gop || !gop->mode || !gop->mode->info ||
+        gop->mode->info_size < sizeof(efi_gop_info)) return;
+    efi_gop_info *m = gop->mode->info;
+    splash_fb.address = gop->mode->framebuffer_base;
+    splash_fb.size = gop->mode->framebuffer_size;
+    splash_fb.width = m->width; splash_fb.height = m->height;
+    splash_fb.stride = m->pixels_per_scanline; splash_fb.format = m->pixel_format;
+    splash_fb.red_mask = m->masks.red; splash_fb.green_mask = m->masks.green;
+    splash_fb.blue_mask = m->masks.blue;
+    splash_enabled = sz_framebuffer_valid(&splash_fb);
+    if (!splash_enabled) return;
+    print("splash: GOP framebuffer accepted\r\n");
+    splash_update(1, "GRAPHICS READY - OPENING ZCORE");
+    for (uint32_t i = 0; i < SZ_BOOT_REVEAL_FRAMES && splash_enabled; i++) {
+        splash_update(1, "GRAPHICS READY - OPENING ZCORE");
+        BS->stall(25000);
+    }
 }
 
 /* ---- small memory helpers (freestanding) ---------------------------- */
@@ -177,9 +253,16 @@ static uint8_t *read_whole_file(efi_file_protocol *file, uint64_t *out_size) {
     s = BS->allocate_pool(EfiLoaderData, size, &buf);
     if (EFI_ERROR(s)) die("AllocatePool for file", s);
 
-    uint64_t got = size;
-    s = file->read(file, &got, buf);
-    if (EFI_ERROR(s) || got != size) die("Read zcore.elf", s);
+    uint64_t offset = 0;
+    while (offset < size) {
+        uint64_t got = size - offset;
+        if (got > 65536) got = 65536;
+        uint64_t requested = got;
+        s = file->read(file, &got, (uint8_t *)buf + offset);
+        if (EFI_ERROR(s) || got == 0 || got > requested) die("Read zcore.elf", s);
+        offset += got;
+        splash_update(2, "READING ZCORE FROM BOOT VOLUME");
+    }
     *out_size = size;
     return (uint8_t *)buf;
 }
@@ -271,7 +354,7 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
     if (EFI_ERROR(s)) die("GetMemoryMap into manifest", s);
 
     info->magic = ZBOOT_MAGIC;
-    info->version = 1;
+    info->version = ZBOOT_VERSION;
     info->info_size = (uint32_t)sizeof(zboot_info);
     info->map_address = (uint64_t)map;
     info->map_size = map_size;
@@ -281,6 +364,16 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
     info->rsdp_address = find_rsdp();
     info->zcore_base = 0x200000;
     info->zcore_entry = entry;
+    info->framebuffer = splash_fb;
+    info->splash_flags = splash_enabled ? ZBOOT_SPLASH_ENABLED : 0;
+    info->splash_frame = splash_frame;
+
+    /* From the final memory-map capture onward: no firmware graphics,
+     * keys, timers, allocations or text output. Direct MMIO alone. */
+    if (splash_enabled)
+        sz_splash_draw(&splash_fb, 5, splash_frame, "MEMORY MAP READY - ENTERING ZCORE", 0, 0);
+    splash_step = 5;
+    boot_services_live = 0;
 
     s = BS->exit_boot_services(image, map_key);
     if (EFI_ERROR(s)) {
@@ -290,6 +383,7 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
         if (EFI_ERROR(s)) die("GetMemoryMap retry", s);
         info->map_size = map_size;
         info->map_desc_size = desc_size;
+        info->map_desc_version = desc_ver;
         s = BS->exit_boot_services(image, map_key);
         if (EFI_ERROR(s)) die("ExitBootServices", s);
     }
@@ -304,17 +398,25 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
 efi_status __attribute__((ms_abi)) efi_main(efi_handle image, efi_system_table *st) {
     ST = st;
     BS = st->boot_services;
+    serial_init();
+    BS->watchdog_timer(0, 0, 0, NULL);
+    splash_init();
+    if (!splash_enabled) print("splash: text / serial fallback active\r\n");
 
     print("\r\nSystemZ loader — M1\r\n");
 
     efi_file_protocol *file = open_zcore(image);
+    splash_update(2, "BOOT VOLUME OPEN - READING ZCORE");
     uint64_t size = 0;
     uint8_t *bytes = read_whole_file(file, &size);
+    file->close(file);
+    splash_update(3, "ZCORE READ - VALIDATING ELF SEGMENTS");
     print("loader: zcore.elf read, bytes=");
     print_hex(size);
     print("\r\n");
 
     uint64_t entry = place_segments(bytes, size);
+    splash_update(4, "ZCORE PLACED - PREPARING HANDOFF");
     print("loader: entry=");
     print_hex(entry);
     print(" — exiting boot services\r\n");
