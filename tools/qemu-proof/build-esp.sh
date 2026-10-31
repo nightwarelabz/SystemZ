@@ -21,7 +21,17 @@ ZCORE_ELF="$ROOT/zcore/target/x86_64-unknown-none/release/zcore"
 
 echo "== build loader =="
 make -C loader clean >/dev/null
-make -C loader
+if [ "${SYSTEMZ_EPT_WIRE:-0}" = "1" ]; then
+  # Harness opt-in (run-vm.sh --ept-wire sets this): the loader is
+  # built with its SZ_EPT_WIRE knob on, so the boot manifest it
+  # writes carries the EPT-wiring harness flag and ZCore flies
+  # that boot's guest attempts with EPT wired. The default build
+  # carries no flag — the proven default configuration.
+  echo "loader knob: SZ_EPT_WIRE=1 (manifest will carry the EPT-wiring harness flag)"
+  make -C loader EPT_WIRE=1
+else
+  make -C loader
+fi
 
 echo "== assemble ESP =="
 ESP="$ROOT/tools/qemu-proof/esp.img"

@@ -17,13 +17,22 @@
 # a birth proven here is proven on Intel virtualization, one nesting
 # level down. The physical boot and the M0 census remain owed.
 #
-# Usage: run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build]
+# Usage: run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build] [--ept-wire]
 #   --mem      guest RAM in MiB (default 1024; the NPT census window
 #              follows the RAM the manifest reports)
 #   --timeout  kill QEMU after SECONDS (default 60). ZCore halts in
 #              place at the end of its run; it never powers the VM
 #              off, so the timeout expiring is the NORMAL ending.
 #   --no-build skip the rebuild and boot the existing ESP image.
+#   --ept-wire ask this boot to wire EPT: the loader is built with
+#              its SZ_EPT_WIRE knob on (through build-esp.sh), so
+#              the boot manifest carries the harness EPT flag and
+#              ZCore flies the boot's guest attempts translated by
+#              its EPT groundwork tables — a harness-selected
+#              experiment, never the default configuration. Only
+#              meaningful with a build; combined with --no-build
+#              it merely labels the run, and the verdict still
+#              reads the wiring off the log, never off the flag.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -37,9 +46,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 MEM=1024
 TIMEOUT=60
 BUILD=1
+EPT_WIRE=0
 
 usage() {
-  echo "usage: run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build]" >&2
+  echo "usage: run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build] [--ept-wire]" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -47,6 +57,7 @@ while [ $# -gt 0 ]; do
     --mem)     [ $# -ge 2 ] || { usage; exit 2; }; MEM="$2"; shift 2 ;;
     --timeout) [ $# -ge 2 ] || { usage; exit 2; }; TIMEOUT="$2"; shift 2 ;;
     --no-build) BUILD=0; shift ;;
+    --ept-wire) EPT_WIRE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "run-vm: unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -190,6 +201,11 @@ if [ "$BUILD" -eq 1 ]; then
   # Via bash, never direct exec: the git tree does not preserve the
   # exec bit on these scripts (first G1 run, 2026-10-29: Permission
   # denied after an otherwise-green preflight).
+  # --ept-wire travels as an environment knob the shared pipeline
+  # reads: it changes the LOADER BUILD (and so the manifest), never
+  # the QEMU invocation — the guest must see the request the same
+  # way it sees everything about its boot, through the manifest.
+  if [ "$EPT_WIRE" -eq 1 ]; then export SYSTEMZ_EPT_WIRE=1; fi
   bash "$ROOT/tools/qemu-proof/build-esp.sh"
 fi
 
@@ -215,6 +231,9 @@ else
 fi
 
 echo "== boot under QEMU/KVM (-cpu host, ${MEM} MiB RAM, timeout ${TIMEOUT}s) =="
+if [ "$EPT_WIRE" -eq 1 ]; then
+  echo "run label: EPT-WIRED ATTEMPT — the manifest's harness flag asks ZCore to wire EPT for this boot's guest attempts; the log's 'ept patch' lines are the evidence it did"
+fi
 echo "serial log: $LOG"
 timeout --foreground "$TIMEOUT" qemu-system-x86_64 \
   -machine q35 -accel kvm -cpu host -m "$MEM" \
@@ -267,6 +286,27 @@ elif [ -n "$(line 'npt: skipped')" ]; then
   echo "npt:         tables not built — $(line 'npt: skipped')"
 else
   echo "npt:         MISSING — no self-check line and no not-applicable line in the log"
+fi
+EPT_CHECK_LINE="$(line 'ept: self-check')"
+if [ -n "$EPT_CHECK_LINE" ]; then
+  echo "ept check:   $EPT_CHECK_LINE"
+elif [ -n "$(line 'ept: skipped')" ]; then
+  echo "ept check:   tables not built — $(line 'ept: skipped')"
+else
+  echo "ept check:   MISSING — no ept: self-check line in the log"
+fi
+# The EPT wiring verdict, read off the log like every other line
+# here: an attempt announces its own wiring ("ept patch:"), and
+# that announcement — never the --ept-wire flag — is what WIRED
+# means. A requested run with no patch line flew the default
+# configuration, whatever the request was.
+EPT_PATCH_LINE="$(line 'ept patch:')"
+if [ -n "$EPT_PATCH_LINE" ]; then
+  echo "ept wired:   WIRED this run — $EPT_PATCH_LINE"
+elif [ "$EPT_WIRE" -eq 1 ]; then
+  echo "ept wired:   REQUESTED (--ept-wire) but NOT WIRED — no 'ept patch' line in the log; the attempts flew the default configuration (the ept check line above says whether the tables themselves passed)"
+else
+  echo "ept wired:   not wired (the default configuration — this boot's manifest carried no harness EPT flag)"
 fi
 VMX_READY_LINE="$(line 'vmx: readiness:')"
 if [ -n "$VMX_READY_LINE" ]; then echo "vmx ready:   $VMX_READY_LINE"; else echo "vmx ready:   readiness line NOT SEEN"; fi
@@ -359,6 +399,8 @@ elif [ -n "$(line 'vmx: guest birth FAILED')" ]; then
     34) REASON_NAME="VM-entry failure due to MSR loading — the VM-entry MSR-load area was refused" ;;
     10) REASON_NAME="CPUID exit — the birth path, but the run did not complete it; see the log" ;;
     12) REASON_NAME="HLT exit — the guest ran but halted before its CPUID; not the birth sequence" ;;
+    48) REASON_NAME="EPT violation — the guest touched a guest-physical address the EPT tables leave unmapped (or mapped without the attempted access); reachable only on an --ept-wire run, and the exit qualification in the log carries the address" ;;
+    49) REASON_NAME="EPT misconfiguration — an EPT entry itself is malformed (reserved bits set or an unusable memory type): a defect in the tables' construction, not in the guest" ;;
     *)  REASON_NAME="not classified here — the log line itself is the evidence" ;;
   esac
   if grep -q 'vmx: y1 exit #1 reason' "$LOG"; then

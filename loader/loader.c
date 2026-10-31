@@ -65,6 +65,16 @@ static int splash_enabled, boot_services_live = 1;
 #define SZ_BOOT_REVEAL_FRAMES 12
 #endif
 
+/* Harness opt-in: build with SZ_EPT_WIRE=1 (the vm-test loop's
+ * --ept-wire does exactly this, through build-esp.sh) and the boot
+ * manifest carries ZBOOT_HARNESS_EPT_WIRE, asking ZCore to wire
+ * EPT for this boot's guest attempts. The default build writes 0:
+ * no harness flag, the proven default configuration. This knob
+ * changes only the manifest word — never loader behavior. */
+#ifndef SZ_EPT_WIRE
+#define SZ_EPT_WIRE 0
+#endif
+
 static void serial_byte(uint8_t value) {
     uint8_t ready = 0;
     for (uint32_t i = 0; i < 10000; i++) {
@@ -367,6 +377,8 @@ static void exit_and_jump(efi_handle image, uint64_t entry) {
     info->framebuffer = splash_fb;
     info->splash_flags = splash_enabled ? ZBOOT_SPLASH_ENABLED : 0;
     info->splash_frame = splash_frame;
+    info->harness_flags = SZ_EPT_WIRE ? ZBOOT_HARNESS_EPT_WIRE : 0;
+    info->reserved1 = 0;
 
     /* From the final memory-map capture onward: no firmware graphics,
      * keys, timers, allocations or text output. Direct MMIO alone. */

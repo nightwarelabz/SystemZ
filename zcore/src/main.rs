@@ -21,13 +21,16 @@
 //!   svm_launch. Its entry is likewise unproven here (QEMU TCG does
 //!   not offer VMX at all — the readiness block says so as measured).
 //! - extended page tables for the Intel path, built from the boot
-//!   manifest and verified by a software walk — but NOT wired into
-//!   the VMCS: the EPTP field is never written and secondary
-//!   controls stay off; the wiring belongs to the birth proof on
-//!   hardware, beside the NPT wiring.
+//!   manifest and verified by a software walk. The wiring exists
+//!   but is harness-gated: only a boot whose manifest carries the
+//!   harness EPT flag flies its attempts with the EPTP field
+//!   written and secondary controls armed; the default boot never
+//!   wires, and no guest birth under EPT has been witnessed yet —
+//!   that witness is owed on hardware.
 //!
-//! What does NOT exist yet: EPT/NPT wiring, vCPU scheduling, ZBus.
-//! This file will say so until they land.
+//! What does NOT exist yet: NPT wiring (the VMCB's nCR3 is never
+//! written), EPT wiring on any default path, vCPU scheduling,
+//! ZBus. This file will say so until they land.
 
 #![no_std]
 #![no_main]
@@ -132,6 +135,8 @@ fn probe() -> Capabilities {
 // if the two ever disagree, the magic check below is what catches it.
 
 const ZBOOT_MAGIC: u64 = 0x31303054_4F4F425A; // "ZBOOT001" little-endian, per loader/zboot.h
+const ZBOOT_V2_SIZE: u64 = 128; // sizeof the v2 manifest; the v3 appends ride after it
+const ZBOOT_HARNESS_EPT_WIRE: u32 = 1; // harness_flags bit: wire EPT for this boot's VMX attempts
 
 #[repr(C)]
 struct ZBootInfo {
@@ -150,14 +155,15 @@ struct ZBootInfo {
 
 const _: () = assert!(core::mem::size_of::<ZBootInfo>() == 72);
 
-// Manifest v2 boot graphics: if this manifest is a valid v2, hand its
+// Manifest v2 boot graphics: if this manifest is v2 or later (the
+// append-only ABI keeps the graphics prefix identical), hand its
 // framebuffer value to the boot screen. Silent on every failure path —
 // with graphics absent, the boot (serial included) is byte-identical
 // to the pre-splash one; the splash only ever adds a channel.
 fn attach_boot_screen(manifest_addr: u64) -> bool {
     if manifest_addr == 0 { return false; }
     let info = unsafe { &*(manifest_addr as *const ZBootInfo) };
-    if info.magic != ZBOOT_MAGIC || info.version != 2 || info.info_size < 128 {
+    if info.magic != ZBOOT_MAGIC || info.version < 2 || info.info_size < 128 {
         return false;
     }
     let graphics = unsafe {
@@ -172,6 +178,22 @@ fn attach_boot_screen(manifest_addr: u64) -> bool {
     } else {
         false
     }
+}
+
+// Manifest v3 harness flags: the opt-in switch word the loader
+// appends after the complete v2 struct (loader/zboot.h). A
+// manifest that predates v3 — or no manifest at all — reads 0:
+// every switch OFF, the default configuration. The word is read
+// here, beside the graphics read, in the same offset style; the
+// one consumer today is the VMX path's EPT wiring gate
+// (ZBOOT_HARNESS_EPT_WIRE).
+fn harness_flags(manifest_addr: u64) -> u32 {
+    if manifest_addr == 0 { return 0; }
+    let info = unsafe { &*(manifest_addr as *const ZBootInfo) };
+    if info.magic != ZBOOT_MAGIC || info.version < 3 || info.info_size < 136 {
+        return 0;
+    }
+    unsafe { core::ptr::read_unaligned((manifest_addr + ZBOOT_V2_SIZE) as *const u32) }
 }
 
 // ---------------------------------------------------------------- guest outcomes
@@ -942,15 +964,17 @@ fn build_npt(manifest_addr: u64) {
 // Intel twin of the NPT section above.
 //
 // The tables are BUILT from the boot manifest, VERIFIED by walking
-// them in software, and their census is printed. They are NOT wired
-// into the VMCS: the EPTP field (encoding 0x201A) is deliberately
-// never written this round, and the processor-based controls never
-// arm "activate secondary controls", so no guest could consume
-// these tables even in principle. The EPTP value is computed and
-// printed as a candidate only. Wiring a guest-visible translation
-// change nobody has witnessed a guest survive is how hardware
-// bites; the wiring belongs to the birth-proof step on real
-// hardware, beside the VMLAUNCH that will first consume it.
+// them in software, and their census is printed. The EPTP value is
+// computed and, on a clean build only, published as EPT_CANDIDATE
+// for the VMX section. The build itself never wires: the EPTP
+// field (encoding 0x201A) is written only by the VMX attempts, and
+// only on a boot whose manifest carries the harness EPT flag —
+// the wiring is a harness-selected experiment (see
+// ept_wire_patch), never the default configuration, because
+// wiring a guest-visible translation change nobody has witnessed
+// a guest survive is how hardware bites; the witness belongs to
+// the birth-proof step on real hardware, beside the VMLAUNCH that
+// will first consume it.
 //
 // The mapping rule is the NPT section's rule, shared verbatim —
 // the same window, the same RAM-region list (parse_ram_regions,
@@ -993,6 +1017,14 @@ static mut EPT_PDPT: AlignedPage = AlignedPage([0; 4096]);
 static mut EPT_PD: [AlignedPage; 64] = [ZERO_PAGE; 64];
 const EPT_PT_POOL: usize = 128;
 static mut EPT_PT: [AlignedPage; EPT_PT_POOL] = [ZERO_PAGE; EPT_PT_POOL];
+
+/// The EPTP candidate a clean build publishes for the VMX section:
+/// 0 until build_ept completes with a passing self-check — and 0
+/// is never a wireable value (a real candidate carries its root's
+/// address plus the WB / walk-length bits). The wiring gate reads
+/// this and nothing else about the tables, so a boot whose tables
+/// were skipped or failed verification has nothing to wire.
+static mut EPT_CANDIDATE: u64 = 0;
 
 const EPT_WINDOW_CAP: u64 = NPT_WINDOW_CAP; // the same 64 GiB table budget
 
@@ -1082,7 +1114,7 @@ fn build_ept(manifest_addr: u64) {
             if ept_armable { "allowed" } else { "NOT allowed" },
             (sec_caps >> 32) as u32);
     if pw4 && wb && large2m && sec_armable && ept_armable {
-        sprint!("ept: this CPU advertises EPT in the shape this construction needs — the tables below are consumable in principle; they are still NOT wired this round\r\n");
+        sprint!("ept: this CPU advertises EPT in the shape this construction needs — the tables below are consumable in principle; the build wires nothing itself — wiring is the harness gate's call, applied per attempt after the fill\r\n");
     } else {
         sprint!("ept: this CPU does NOT advertise EPT in the shape this construction needs (missing:{}{}{}{}{}) — the tables below are groundwork only; no guest on this host could consume them\r\n",
                 if pw4 { "" } else { " page-walk-4" },
@@ -1294,10 +1326,18 @@ fn build_ept(manifest_addr: u64) {
     }
     // The EPTP candidate: root address, memory type WB (6) in bits
     // 2:0, page-walk length 4 (length-1 = 3) in bits 5:3, EPT
-    // accessed/dirty flags (bit 6) off. Computed and printed only —
-    // the VMCS field it names is never written this round.
+    // accessed/dirty flags (bit 6) off. Computed and printed; the
+    // build writes no VMCS field — wiring is the attempts' act,
+    // under the harness gate (see ept_wire_patch).
     let eptp = (pml4 as u64) | 6 | (3 << 3);
-    sprint!("ept: root {:#x} is the EPTP candidate {:#x} (memory type WB, page-walk length 4) — NOT wired: the VMCS EPTP field is never written and secondary controls stay off this round; wiring belongs to the birth proof on real hardware\r\n",
+    // Publish the candidate ONLY on the verdict's own condition:
+    // a skipped build returned long ago and a failed or incomplete
+    // one leaves EPT_CANDIDATE at 0, so the gate downstream can
+    // never wire tables this walk did not just verify.
+    if mismatches == 0 && !incomplete && walked_pages == expected_pages {
+        unsafe { EPT_CANDIDATE = eptp; }
+    }
+    sprint!("ept: root {:#x} is the EPTP candidate {:#x} (memory type WB, page-walk length 4) — the builder writes no VMCS field: EPTP and the secondary controls are the harness gate's call, applied per attempt after the fill when the manifest asks\r\n",
             pml4 as u64, eptp);
 }
 
@@ -1318,9 +1358,13 @@ fn build_ept(manifest_addr: u64) {
 //     VMCS they would be reserved-bit entry failures on Intel.
 //   * HOST_RSP / HOST_RIP are written by the launch bridge itself:
 //     only the bridge knows the exact stack the exit must land on.
-//   * EPT is NOT half-built here: secondary controls stay off, the
-//     EPTP field is never written, and the readiness block says EPT
-//     is the next groundwork step, the twin of this round's NPT.
+//   * EPT wiring is harness-gated: the fill never writes the EPTP
+//     field and never arms secondary controls. Only a boot whose
+//     manifest carries the harness EPT flag flies its attempts
+//     translated by the groundwork tables — applied as a patch
+//     after the fill (ept_wire_patch) and announced per attempt —
+//     so the default boot stays the exact configuration every
+//     birth so far was proven on.
 
 use core::arch::global_asm as global_asm_vmx;
 
@@ -1481,6 +1525,8 @@ mod vf {
     pub const H_FS_SEL: u64 = 0x0C08;
     pub const H_GS_SEL: u64 = 0x0C0A;
     pub const H_TR_SEL: u64 = 0x0C0C;
+    // 64-bit control
+    pub const EPTP: u64 = 0x201A;
     // 64-bit guest / host state
     pub const G_LINK_PTR: u64 = 0x2800;
     pub const G_DEBUGCTL: u64 = 0x2802;
@@ -1604,6 +1650,7 @@ fn vf_name(field: u64) -> &'static str {
         H_PAT => "host IA32_PAT",
         H_EFER => "host IA32_EFER",
         H_PERF_GLOBAL => "host IA32_PERF_GLOBAL_CTRL",
+        EPTP => "EPT pointer",
         PIN_CTLS => "pin-based controls",
         PROC_CTLS => "primary processor-based controls",
         PROC_CTLS2 => "secondary processor-based controls",
@@ -1685,6 +1732,11 @@ fn vf_name(field: u64) -> &'static str {
 
 const VMX_EXIT_REASON_CPUID: u64 = 10;
 const VMX_EXIT_REASON_HLT: u64 = 12;
+// (The EPT exits — SDM basic exit reasons 48 EPT violation and 49
+// EPT misconfiguration — get no constants here: nothing switches
+// on them, deliberately. They are reachable only on a
+// harness-gated boot, and their handling posture lives in
+// vmx_birth, in the shared failure path.)
 
 fn read_cr(n: u8) -> u64 {
     let v: u64;
@@ -1938,13 +1990,15 @@ fn vmx_first_guest(manifest_addr: u64) {
     // Intel log are never misread: rung Y1 (below) flies the
     // guest with its CR3 naming THESE tables instead of the
     // firmware's. The EPT groundwork is built beside them
-    // (build_ept, below): built, verified, NOT wired — secondary
-    // controls stay off and the EPTP field is never written this
-    // round. And the tables' own closing line — the root is NOT
-    // wired into the VMCB, nCR3 never written — stays true of the
-    // AMD path; Y1's wiring of the same root into a VMCS is Y1's
-    // own act, announced in its preamble.
-    sprint!("npt: on Intel the groundwork tables are built for one rung only — Y1's guest CR3 names them; EPT remains this path's unbuilt nested paging\r\n");
+    // (build_ept, below): built, verified, and its EPTP candidate
+    // published — the attempts wire it only when this boot's
+    // manifest carries the harness EPT flag (the gate is read
+    // with the controls below); on the default boot the EPTP
+    // field is never written. And the tables' own closing line —
+    // the root is NOT wired into the VMCB, nCR3 never written —
+    // stays true of the AMD path; Y1's wiring of the same root
+    // into a VMCS is Y1's own act, announced in its preamble.
+    sprint!("npt: on Intel the groundwork tables are built for one rung only — Y1's guest CR3 names them; the EPT groundwork beside them is built too — its wiring is harness-gated, off unless the boot manifest's harness flag asks for it\r\n");
     build_npt(manifest_addr);
     build_ept(manifest_addr);
 
@@ -2005,8 +2059,10 @@ fn vmx_first_guest(manifest_addr: u64) {
     let entry_msr = if use_true { msr_vmx::TRUE_ENTRY } else { msr_vmx::ENTRY };
     let pin_ctls = adjust_controls(pin_msr, 0);
     // HLT exiting (primary bit 7). CPUID needs no bit: it exits
-    // unconditionally under VMX. Secondary controls stay off, so
-    // EPT stays unbuilt this round — see the section header.
+    // unconditionally under VMX. The fill's word arms no
+    // secondary controls — EPT wiring, when the harness gate
+    // asks for it, is a per-attempt patch on top of this word
+    // (ept_wire_patch), never a change to the flown fill.
     let proc_ctls = adjust_controls(proc_msr, 1 << 7);
     // Exit: 64-bit host (bit 9), save guest EFER (20), load host EFER (21).
     let exit_ctls = adjust_controls(exit_msr, (1 << 9) | (1 << 20) | (1 << 21));
@@ -2021,6 +2077,30 @@ fn vmx_first_guest(manifest_addr: u64) {
     // current EFER field (which carries LMA = 0): that pairing
     // would fail entry on the EFER checks instead.
     let entry_ctls = adjust_controls(entry_msr, (1 << 9) | (1 << 16));
+    // The EPT wiring words, computed beside the flown controls
+    // and carried in the world for the attempts' patch — they are
+    // NOT part of the fill: the primary word with "activate
+    // secondary controls" (bit 31) requested atop the flown HLT
+    // bit, and the secondary word with "enable EPT" (bit 1)
+    // requested, each capability-adjusted through the same MSRs
+    // the flown words came from. An attempt applies them only
+    // when the wiring gate (in the world below) is on; until a
+    // patch writes them they are inert data, and on a machine
+    // whose capability masks refuse either bit the adjustment
+    // clears it and the patch line prints the word actually
+    // flown — a gate the CPU refuses reads as its values, never
+    // as a claim.
+    let proc_ctls_ept = adjust_controls(proc_msr, (1 << 7) | (1 << 31));
+    let proc_ctls2 = adjust_controls(msr_vmx::PROCBASED_CTLS2, 1 << 1);
+    // The wiring gate itself: the manifest's harness flag asks,
+    // and build_ept's verified candidate answers. Both must hold.
+    // If either fails — a default manifest, or tables that were
+    // skipped or failed their walk — this boot flies the default
+    // configuration exactly, and no attempt prints a wiring line:
+    // the harness reads a requested-but-unwired run off that
+    // absence, not off a claim.
+    let ept_wire = harness_flags(manifest_addr) & ZBOOT_HARNESS_EPT_WIRE != 0
+        && unsafe { EPT_CANDIDATE } != 0;
     // The load-bit tables the ladder patches and the dump decodes
     // against, verified for the ladder round against the SDM text
     // itself (Vol. 3C, VM-entry controls §24.8.1 and VM-exit
@@ -2055,7 +2135,7 @@ fn vmx_first_guest(manifest_addr: u64) {
     sprint!("vmx: controls from capability MSRs ({}): pin {:#x} proc {:#x} exit {:#x} entry {:#x}\r\n",
             if use_true { "true-controls" } else { "legacy controls" },
             pin_ctls, proc_ctls, exit_ctls, entry_ctls);
-    sprint!("vmx: intercept policy mirrors the SVM path: HLT exiting armed; CPUID exits unconditionally (no control bit exists); EPT untouched — secondary controls off, EPTP never written; EPT is the next groundwork step\r\n");
+    sprint!("vmx: intercept policy mirrors the SVM path: HLT exiting armed; CPUID exits unconditionally (no control bit exists); EPT untouched in the fill — secondary controls off, EPTP never written there; EPT wiring, when the harness gate asks for it, is applied per attempt as a patch after the fill and announced on its own line\r\n");
 
     // ---- the guest world snapshot: everything the attempts share ----
     // One machine, read once. The controls, the adjusted CRs, the
@@ -2073,6 +2153,8 @@ fn vmx_first_guest(manifest_addr: u64) {
     unsafe { asm!("mov {}, dr7", out(reg) dr7, options(nostack)) };
     let world = VmxWorld {
         pin_ctls, proc_ctls, exit_ctls, entry_ctls, entry_msr,
+        ept_wire, proc_ctls_ept, proc_ctls2,
+        eptp: unsafe { EPT_CANDIDATE },
         adj_cr0, adj_cr4, orig_cr0, orig_cr3, orig_cr4,
         efer_now,
         // Guest EFER: host bits SCE|LME|NXE only — LMA is
@@ -2485,6 +2567,23 @@ struct VmxWorld {
     /// true-controls MSR when the BASIC MSR offers it) — the
     /// ladder's R3/R4 patches re-adjust through this same MSR.
     entry_msr: u32,
+    /// The EPT wiring gate for this boot: the manifest's harness
+    /// flag asked AND build_ept published a verified candidate.
+    /// When false, no attempt patches anything EPT — the boot is
+    /// the default configuration, byte for byte.
+    ept_wire: bool,
+    /// The verified EPTP candidate (build_ept's closing value),
+    /// carried for the wiring patch. Meaningful only when
+    /// ept_wire holds; never written to the VMCS otherwise.
+    eptp: u64,
+    /// Primary processor-based controls with "activate secondary
+    /// controls" requested atop the flown word, capability-
+    /// adjusted — the wiring patch's PROC_CTLS value.
+    proc_ctls_ept: u32,
+    /// Secondary processor-based controls with "enable EPT"
+    /// requested, capability-adjusted — the wiring patch's
+    /// PROC_CTLS2 value.
+    proc_ctls2: u32,
     adj_cr0: u64,
     adj_cr4: u64,
     orig_cr0: u64,
@@ -3323,6 +3422,27 @@ fn vmx_birth(tag: &str, p: &str, kind: u8, rung: u8, w: &VmxWorld, vmcs_pa: u64)
         return vmx_record(Birth::Stopped, GuestOutcome::NotEntered);
     }
     if reason != VMX_EXIT_REASON_CPUID {
+        // EPT exit posture — on a harness-gated boot, an EPT
+        // violation (exit reason 48) or an EPT misconfiguration
+        // (exit reason 49) at the guest's first exit lands HERE,
+        // in the shared failure path, on purpose. It is recorded
+        // the way every first
+        // exit is recorded: the census line above carries the
+        // reason (and the forensics below read the exit
+        // qualification back — for an EPT violation it holds the
+        // guest-physical address the guest touched, and whether
+        // the access was a read, a write, or the fetch itself),
+        // this FAILED line names the outcome, the VMCS is torn
+        // down, and the attempt ENDS. The guest is never resumed
+        // into a translation fault, so an EPT exit can never
+        // silently loop; and there is no mid-boot repair to
+        // attempt, because the tables are static after build_ept
+        // — a violation is a construction fact to file with the
+        // log, not a state to patch on the fly. Reason 33 keeps
+        // its distinct return below it: on a gated boot the
+        // ladder climbs with the wiring as its baseline, like
+        // every other shared variable. (With the gate off, 48/49
+        // cannot occur: no EPT exists to violate.)
         sprint!("vmx: {}guest birth FAILED at first exit (reason {})\r\n", p, reason);
         vmx_entry_forensics(tag);
         vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
@@ -3511,6 +3631,65 @@ fn vmx_wfail_abort(p: &str, f: &Fill, w: &VmxWorld, vmcs_pa: u64) -> bool {
     true
 }
 
+/// The EPT wiring patch: this boot's harness-selected variable,
+/// applied by EVERY attempt (the mirror first of all) when — and
+/// only when — the world's wiring gate is on. It rides the same
+/// machinery as a ladder rung's patch, for the same reasons: the
+/// fill's write sequence is never perturbed, the write count the
+/// control rung is compared against stays the fill's own, and the
+/// read-back dump judges the patched intent via rec.set. A failed
+/// patch names itself like any other rejected write (Fill::patch
+/// prints it) and aborts the attempt before any launch.
+///
+/// The three writes, in order: the EPTP field (the verified
+/// candidate build_ept published), the secondary controls
+/// ("enable EPT"), and LAST the primary word that activates the
+/// secondary controls — the arming write lands after everything
+/// it arms, so the order states the intent even though no entry
+/// can observe an intermediate state.
+///
+/// INVEPT: deliberately NOT executed here, and the reason is
+/// structural, not an oversight. INVEPT invalidates translations
+/// derived from an EPTP that a processor may already hold; this
+/// EPTP has never been entered under — the tables were built
+/// this boot, no guest has run translated by them, and the VMCS
+/// receiving the field was VMCLEARed this boot — so there is no
+/// cached translation for this EPTP anywhere to invalidate, and
+/// a single-context INVEPT here would invalidate the empty set.
+/// The obligation attaches to MUTATION, not to first use: any
+/// future change that rewrites EPT entries after a launch, or
+/// points EPTP at a different root mid-boot, must execute
+/// INVEPT (single-context, type 1) before the next entry, and
+/// the instruction wrapper lands with that change, not before.
+///
+/// One interaction, stated so a gate-on ladder log is never
+/// misread: the wiring is each attempt's BASELINE, and rung
+/// patches layer on top exactly as they do on the mirror. A rung
+/// whose variable is the processor-based word itself (ladder-2's
+/// H2 flies that word at its capability floor) therefore disarms
+/// EPT for its own attempt as a side effect of its variable —
+/// its patch line and the dump show the word actually flown,
+/// and the verdict of that attempt is the rung's, not EPT's.
+///
+/// Returns false when a patch failed: the caller tears down and
+/// stops the attempt, exactly as for a rung patch failure. With
+/// the gate off it returns at once — no write, no line: the
+/// attempt is the default configuration, byte for byte.
+fn ept_wire_patch(f: &mut Fill, w: &VmxWorld, p: &str, vmcs_pa: u64) -> bool {
+    if !w.ept_wire {
+        return true;
+    }
+    sprint!("vmx: {}ept patch: EPTP {:#x} written (build_ept's verified candidate); secondary controls {:#x} (enable EPT); primary controls {:#x} -> {:#x} (activate secondary controls) — this attempt flies translated by the groundwork tables\r\n",
+            p, w.eptp, w.proc_ctls2, w.proc_ctls, w.proc_ctls_ept);
+    if !f.patch(vf::EPTP, w.eptp)
+        || !f.patch(vf::PROC_CTLS2, w.proc_ctls2 as u64)
+        || !f.patch(vf::PROC_CTLS, w.proc_ctls_ept as u64) {
+        vmx_teardown(vmcs_pa, true, w.orig_cr0, w.orig_cr4);
+        return false;
+    }
+    true
+}
+
 enum Attempt {
     Born,
     Refused33,
@@ -3531,6 +3710,11 @@ fn vmx_attempt(w: &VmxWorld, s: &GuestSegs, rung: u8,
     } else {
         sprint!("vmx: ladder VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
                 f.wcount);
+    }
+    // The boot's harness baseline, beneath every rung patch: EPT
+    // wiring, when this boot's gate is on (a no-op otherwise).
+    if !ept_wire_patch(&mut f, w, p, vmcs_pa) {
+        return Attempt::Stopped;
     }
     // ---- the rung's patch: its single variable, applied after
     // the fill so the fill's sequence is never perturbed ----
@@ -3629,6 +3813,9 @@ fn vmx_attempt_h(w: &VmxWorld, s: &GuestSegs, hrung: u8,
     }
     sprint!("vmx: ladder2 VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
             f.wcount);
+    if !ept_wire_patch(&mut f, w, p, vmcs_pa) {
+        return Attempt::Stopped;
+    }
     for &(field, value) in patches {
         sprint!("vmx: ladder2 patch (H{}): {} {:#x} (as filled) -> {:#x}\r\n",
                 hrung, vf_name(field), f.rec.get(field).unwrap_or(0), value);
@@ -3710,6 +3897,9 @@ fn vmx_attempt_x1(w: &VmxWorld, s: &GuestSegs, patches: &[(u64, u64)],
     }
     sprint!("vmx: x1 VMCS filled (host state = this machine now; guest state = its mirror, reference-state patches follow; {} fields written, 0 write failures)\r\n",
             f.wcount);
+    if !ept_wire_patch(&mut f, w, p, vmcs_pa) {
+        return Attempt::Stopped;
+    }
     for &(field, value) in patches {
         match f.rec.get(field) {
             Some(old) => sprint!("vmx: x1 patch: {} {:#x} (as filled) -> {:#x}\r\n",
@@ -3880,6 +4070,9 @@ fn vmx_attempt_y(w: &VmxWorld, s: &GuestSegs, yrung: u8,
     }
     sprint!("vmx: {}VMCS filled (host state = this machine now; guest state = its mirror, rung patches follow; {} fields written, 0 write failures)\r\n",
             p, f.wcount);
+    if !ept_wire_patch(&mut f, w, p, vmcs_pa) {
+        return Attempt::Stopped;
+    }
     for &(field, value) in patches {
         match f.rec.get(field) {
             Some(old) => sprint!("vmx: {}patch: {} {:#x} (as filled) -> {:#x}\r\n",
