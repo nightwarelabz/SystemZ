@@ -20,9 +20,14 @@
 //!   computed from the capability MSRs, a launch bridge mirroring
 //!   svm_launch. Its entry is likewise unproven here (QEMU TCG does
 //!   not offer VMX at all — the readiness block says so as measured).
+//! - extended page tables for the Intel path, built from the boot
+//!   manifest and verified by a software walk — but NOT wired into
+//!   the VMCS: the EPTP field is never written and secondary
+//!   controls stay off; the wiring belongs to the birth proof on
+//!   hardware, beside the NPT wiring.
 //!
-//! What does NOT exist yet: EPT, vCPU scheduling, ZBus. This file
-//! will say so until they land.
+//! What does NOT exist yet: EPT/NPT wiring, vCPU scheduling, ZBus.
+//! This file will say so until they land.
 
 #![no_std]
 #![no_main]
@@ -932,6 +937,370 @@ fn build_npt(manifest_addr: u64) {
             pml4 as u64);
 }
 
+// ---------------------------------------------------------------- ept
+// Extended page tables for the first guest — groundwork only, the
+// Intel twin of the NPT section above.
+//
+// The tables are BUILT from the boot manifest, VERIFIED by walking
+// them in software, and their census is printed. They are NOT wired
+// into the VMCS: the EPTP field (encoding 0x201A) is deliberately
+// never written this round, and the processor-based controls never
+// arm "activate secondary controls", so no guest could consume
+// these tables even in principle. The EPTP value is computed and
+// printed as a candidate only. Wiring a guest-visible translation
+// change nobody has witnessed a guest survive is how hardware
+// bites; the wiring belongs to the birth-proof step on real
+// hardware, beside the VMLAUNCH that will first consume it.
+//
+// The mapping rule is the NPT section's rule, shared verbatim —
+// the same window, the same RAM-region list (parse_ram_regions,
+// block_class and cover_hint above are vendor-neutral) —
+// translated where the vendors' entry formats differ:
+//   * EPT has no present bit and no NX bit: an entry is present
+//     iff any of its read/write/execute bits is set, and execute
+//     permission is a bit of its own. Code descriptors (types
+//     1/3/5) map with X set; data descriptors map with X clear —
+//     the NPT section's NX policy stated with Intel's polarity.
+//   * Non-leaf entries carry R/W/X all set (second-level
+//     translation is permissive here, exactly as on the AMD side);
+//     leaf entries carry R/W always, X per the class above, and
+//     the WB memory type (6) in bits 5:3 — the only memory type
+//     this construction uses, gated on the capability report in
+//     build_ept below.
+//   * A 2 MiB large page replaces its 512 small pages under the
+//     same condition as NPT (full coverage, one execute class);
+//     otherwise the block falls back to a page table of 4 KiB
+//     entries. Holes inside the window stay not-present (R=W=X=0),
+//     so a guest touch there would raise an EPT violation.
+// Capability gating is reported before the build: build_ept reads
+// IA32_VMX_EPT_VPID_CAP and the two control gates an enable would
+// have to pass ("activate secondary controls" in the primary
+// processor-based controls, "enable EPT" in the secondary
+// controls) and says plainly whether this CPU advertises EPT in
+// the shape this construction needs. Construction proceeds from
+// the manifest either way — groundwork tables are just memory —
+// but a host that does not advertise EPT is never made to sound
+// like one that does. On a host with no VMX at all this code never
+// runs: vmx_readiness_absent has already said so, as measured.
+// Table budget mirrors NPT exactly: the window is capped at
+// 64 GiB (1 PML4 page, 1 PDPT page, up to 64 PD pages) plus a
+// 128-page PT pool. The tables describe themselves too: ZCore's
+// own image sits in loader RAM, so the pool pages are inside the
+// map they build — as with every hypervisor's EPT/NPT.
+
+static mut EPT_PML4: AlignedPage = AlignedPage([0; 4096]);
+static mut EPT_PDPT: AlignedPage = AlignedPage([0; 4096]);
+static mut EPT_PD: [AlignedPage; 64] = [ZERO_PAGE; 64];
+const EPT_PT_POOL: usize = 128;
+static mut EPT_PT: [AlignedPage; EPT_PT_POOL] = [ZERO_PAGE; EPT_PT_POOL];
+
+const EPT_WINDOW_CAP: u64 = NPT_WINDOW_CAP; // the same 64 GiB table budget
+
+const EP_R: u64 = 1 << 0;
+const EP_W: u64 = 1 << 1;
+const EP_X: u64 = 1 << 2;
+const EP_PS: u64 = 1 << 7;
+const EP_MT_WB: u64 = 6 << 3; // leaf memory type (bits 5:3): write-back
+const EP_TABLE_FLAGS: u64 = EP_R | EP_W | EP_X; // non-leaf entries
+const EP_LEAF_FLAGS: u64 = EP_R | EP_W; // leaves add X (class) + memory type
+const EP_ADDR: u64 = 0x000F_FFFF_FFFF_F000;
+const EP_ADDR_2M: u64 = 0x000F_FFFF_FFE0_0000;
+
+fn ept_w64(page_base: *mut u8, index: usize, value: u64) {
+    unsafe {
+        core::ptr::write_unaligned(page_base.add(index * 8) as *mut u64, value);
+    }
+}
+fn ept_r64(page_base: *const u8, index: usize) -> u64 {
+    unsafe { core::ptr::read_unaligned(page_base.add(index * 8) as *const u64) }
+}
+
+/// "supported" / "NOT supported" for the capability lines.
+fn ept_sup(b: bool) -> &'static str {
+    if b { "supported" } else { "NOT supported" }
+}
+
+/// Walk the built tables for `gpa`. Some((leaf entry, is_large)).
+/// An EPT entry is present iff any access bit (R/W/X) is set.
+fn ept_lookup(pml4: *const u8, gpa: u64) -> Option<(u64, bool)> {
+    let pml4e = ept_r64(pml4, ((gpa >> 39) & 0x1FF) as usize);
+    if pml4e & EP_TABLE_FLAGS == 0 {
+        return None;
+    }
+    let pdpt = (pml4e & EP_ADDR) as *const u8;
+    let pdpte = ept_r64(pdpt, ((gpa >> 30) & 0x1FF) as usize);
+    if pdpte & EP_TABLE_FLAGS == 0 {
+        return None;
+    }
+    let pd = (pdpte & EP_ADDR) as *const u8;
+    let pde = ept_r64(pd, ((gpa >> 21) & 0x1FF) as usize);
+    if pde & EP_TABLE_FLAGS == 0 {
+        return None;
+    }
+    if pde & EP_PS != 0 {
+        return Some((pde, true));
+    }
+    let pt = (pde & EP_ADDR) as *const u8;
+    let pte = ept_r64(pt, ((gpa >> 12) & 0x1FF) as usize);
+    if pte & EP_TABLE_FLAGS == 0 {
+        return None;
+    }
+    Some((pte, false))
+}
+
+fn build_ept(manifest_addr: u64) {
+    sprint!("ept: groundwork — building extended page tables for the first guest (tables only; NOT wired into the VMCS)\r\n");
+
+    // ---- capability gating: what this CPU actually offers ----
+    // Read on the VMX path only (build_ept's sole caller is
+    // vmx_first_guest), where CPUID has already said VMX exists;
+    // on a VMX-less host these MSRs do not exist to be read, and
+    // the readiness block's measured refusal is the whole report.
+    let cap = rdmsr(msr_vmx::EPT_VPID_CAP);
+    let pw4 = cap & (1 << 0) != 0;
+    let wb = cap & (1 << 6) != 0;
+    let large2m = cap & (1 << 16) != 0;
+    let large1g = cap & (1 << 17) != 0;
+    sprint!("ept: IA32_VMX_EPT_VPID_CAP {:#x}: page-walk length 4 {}, WB memory type {}, 2 MiB large pages {}, 1 GiB large pages {}\r\n",
+            cap, ept_sup(pw4), ept_sup(wb), ept_sup(large2m), ept_sup(large1g));
+    // Enabling EPT at all is a two-gate path: the primary
+    // processor-based controls must allow "activate secondary
+    // controls" (bit 31), and IA32_VMX_PROCBASED_CTLS2's
+    // "enable EPT" (bit 1) must be allowed-1. Both gates are
+    // reported as measured; this round arms neither.
+    let basic = rdmsr(msr_vmx::VMX_BASIC);
+    let use_true = basic & (1 << 55) != 0;
+    let proc_msr = if use_true { msr_vmx::TRUE_PROCBASED } else { msr_vmx::PROCBASED };
+    let proc_caps = rdmsr(proc_msr);
+    let sec_caps = rdmsr(msr_vmx::PROCBASED_CTLS2);
+    let sec_armable = (proc_caps >> 32) & (1 << 31) != 0;
+    let ept_armable = (sec_caps >> 32) & (1 << 1) != 0;
+    sprint!("ept: enable path: 'activate secondary controls' {} ({} allowed-1 {:#x}), 'enable EPT' {} (IA32_VMX_PROCBASED_CTLS2 allowed-1 {:#x})\r\n",
+            if sec_armable { "allowed" } else { "NOT allowed" },
+            if use_true { "IA32_VMX_TRUE_PROCBASED_CTLS" } else { "IA32_VMX_PROCBASED_CTLS" },
+            (proc_caps >> 32) as u32,
+            if ept_armable { "allowed" } else { "NOT allowed" },
+            (sec_caps >> 32) as u32);
+    if pw4 && wb && large2m && sec_armable && ept_armable {
+        sprint!("ept: this CPU advertises EPT in the shape this construction needs — the tables below are consumable in principle; they are still NOT wired this round\r\n");
+    } else {
+        sprint!("ept: this CPU does NOT advertise EPT in the shape this construction needs (missing:{}{}{}{}{}) — the tables below are groundwork only; no guest on this host could consume them\r\n",
+                if pw4 { "" } else { " page-walk-4" },
+                if wb { "" } else { " wb-memory-type" },
+                if large2m { "" } else { " 2m-large-pages" },
+                if sec_armable { "" } else { " activate-secondary-controls" },
+                if ept_armable { "" } else { " enable-ept" });
+    }
+
+    if manifest_addr == 0 {
+        sprint!("ept: skipped — no boot manifest, so no RAM window to size the map from\r\n");
+        return;
+    }
+    let info = unsafe { &*(manifest_addr as *const ZBootInfo) };
+    if info.magic != ZBOOT_MAGIC {
+        sprint!("ept: skipped — manifest magic mismatch, refusing its contents\r\n");
+        return;
+    }
+    let (nregions, raw_window_end, truncated) = parse_ram_regions(info);
+    if nregions == 0 {
+        sprint!("ept: skipped — manifest describes no RAM regions\r\n");
+        return;
+    }
+    let regions: &[RamRegion] = unsafe { &(&*core::ptr::addr_of!(RAM_REGIONS))[..nregions] };
+    let mut window = (raw_window_end + 0x1F_FFFF) & !0x1F_FFFFu64; // 2 MiB align up
+    let mut capped = false;
+    if window > EPT_WINDOW_CAP {
+        window = EPT_WINDOW_CAP;
+        capped = true;
+    }
+    sprint!("ept: window [0, {:#x}) from {} RAM descriptors (rule: highest RAM-descriptor end, 2 MiB aligned{})\r\n",
+            window, nregions,
+            if capped { "; CAPPED at the 64 GiB table budget — this machine has more RAM than the tables describe" } else { "" });
+    if truncated {
+        sprint!("ept: WARNING — manifest had more RAM descriptors than the {}-entry region list; the map is built from the first {} only\r\n",
+                MAX_RAM_REGIONS, MAX_RAM_REGIONS);
+    }
+
+    // Zero the pools explicitly: determinism must not depend on how
+    // the loader happened to leave .bss.
+    let pml4 = core::ptr::addr_of_mut!(EPT_PML4) as *mut u8;
+    let pdpt = core::ptr::addr_of_mut!(EPT_PDPT) as *mut u8;
+    let pd_pool = core::ptr::addr_of_mut!(EPT_PD) as *mut u8;
+    let pt_pool = core::ptr::addr_of_mut!(EPT_PT) as *mut u8;
+    unsafe {
+        core::ptr::write_bytes(pml4, 0, 4096);
+        core::ptr::write_bytes(pdpt, 0, 4096);
+        core::ptr::write_bytes(pd_pool, 0, 64 * 4096);
+        core::ptr::write_bytes(pt_pool, 0, EPT_PT_POOL * 4096);
+    }
+
+    let npd = ((window + (1 << 30) - 1) >> 30) as usize;
+    ept_w64(pml4, 0, (pdpt as u64) | EP_TABLE_FLAGS);
+
+    let mut large: u64 = 0;
+    let mut small: u64 = 0;
+    let mut pt_used: usize = 0;
+    let mut incomplete = false;
+    for gi in 0..npd {
+        let pd = unsafe { pd_pool.add(gi * 4096) };
+        ept_w64(pdpt, gi, (pd as u64) | EP_TABLE_FLAGS);
+        for bi in 0..512usize {
+            let block = ((gi as u64) << 30) + ((bi as u64) << 21);
+            if block >= window {
+                break;
+            }
+            let (covered, has_code, has_data) = block_class(regions, block);
+            if covered == 512 && has_code != has_data {
+                let x = if has_code { EP_X } else { 0 };
+                ept_w64(pd, bi, block | EP_LEAF_FLAGS | EP_MT_WB | EP_PS | x);
+                large += 1;
+            } else if covered > 0 {
+                if pt_used >= EPT_PT_POOL {
+                    sprint!("ept: BUILD INCOMPLETE — PT pool ({} pages) exhausted at GPA {:#x}; the map under-covers the window and says so\r\n",
+                            EPT_PT_POOL, block);
+                    incomplete = true;
+                    break;
+                }
+                let pt = unsafe { pt_pool.add(pt_used * 4096) };
+                pt_used += 1;
+                ept_w64(pd, bi, (pt as u64) | EP_TABLE_FLAGS);
+                let mut hint = 0usize;
+                for pi in 0..512u64 {
+                    let pg = block + pi * 4096;
+                    if let Some(code) = cover_hint(regions, &mut hint, pg) {
+                        let x = if code { EP_X } else { 0 };
+                        ept_w64(pt, pi as usize, pg | EP_LEAF_FLAGS | EP_MT_WB | x);
+                        small += 1;
+                    }
+                }
+            }
+        }
+        if incomplete {
+            break;
+        }
+    }
+
+    sprint!("ept: tables: root {:#x} — pml4 1 page, pdpt 1 page, pd {} pages, pt {} of {} pool pages ({} table pages total)\r\n",
+            pml4 as u64, npd, pt_used, EPT_PT_POOL, 2 + npd + pt_used);
+    sprint!("ept: map: {} large pages (2 MiB) + {} small pages (4 KiB) = {} MiB mapped of the {} MiB window; holes (reserved/MMIO) stay not-present\r\n",
+            large, small,
+            (large * 0x20_0000 + small * 4096) / (1024 * 1024),
+            window / (1024 * 1024));
+
+    // ---- self-verification: two independent walks of the tables ----
+    // Completeness: every page the rule says is RAM must be present in
+    // the tables with the rule's address and permissions. Soundness:
+    // every present leaf must be a page the rule covers, with matching
+    // address/permissions — nothing extra may be mapped.
+    let mut mismatches: u64 = 0;
+    let mut expected_pages: u64 = 0;
+    {
+        let mut hint = 0usize;
+        let mut gpa = 0u64;
+        while gpa < window {
+            if let Some(code) = cover_hint(regions, &mut hint, gpa) {
+                expected_pages += 1;
+                match ept_lookup(pml4, gpa) {
+                    Some((entry, is_large)) => {
+                        let want_addr = if is_large { gpa & !0x1F_FFFFu64 } else { gpa };
+                        let got_addr = if is_large {
+                            entry & EP_ADDR_2M
+                        } else {
+                            entry & EP_ADDR
+                        };
+                        let want_x = if code { EP_X } else { 0 };
+                        if got_addr != want_addr
+                            || entry & EP_LEAF_FLAGS != EP_LEAF_FLAGS
+                            || entry & EP_X != want_x
+                            || entry & (0x7 << 3) != EP_MT_WB
+                        {
+                            mismatches += 1;
+                        }
+                    }
+                    None => mismatches += 1,
+                }
+            }
+            gpa += 4096;
+        }
+    }
+    let mut present_leaves: u64 = 0;
+    let mut walked_pages: u64 = 0;
+    for gi in 0..npd {
+        let pd = unsafe { pd_pool.add(gi * 4096) } as *const u8;
+        for bi in 0..512usize {
+            let block = ((gi as u64) << 30) + ((bi as u64) << 21);
+            if block >= window {
+                break;
+            }
+            let pde = ept_r64(pd, bi);
+            if pde & EP_TABLE_FLAGS == 0 {
+                continue;
+            }
+            if pde & EP_PS != 0 {
+                present_leaves += 1;
+                walked_pages += 512;
+                let mut hint = 0usize;
+                let code = cover_hint(regions, &mut hint, block);
+                let want_x = match code {
+                    Some(true) => EP_X,
+                    Some(false) => 0,
+                    None => {
+                        mismatches += 1;
+                        continue;
+                    }
+                };
+                if pde & EP_ADDR_2M != block
+                    || pde & EP_LEAF_FLAGS != EP_LEAF_FLAGS
+                    || pde & EP_X != want_x
+                    || pde & (0x7 << 3) != EP_MT_WB
+                {
+                    mismatches += 1;
+                }
+            } else {
+                let pt = (pde & EP_ADDR) as *const u8;
+                let mut hint = 0usize;
+                for pi in 0..512usize {
+                    let pte = ept_r64(pt, pi);
+                    if pte & EP_TABLE_FLAGS == 0 {
+                        continue;
+                    }
+                    present_leaves += 1;
+                    walked_pages += 1;
+                    let pg = block + (pi as u64) * 4096;
+                    match cover_hint(regions, &mut hint, pg) {
+                        Some(code) => {
+                            let want_x = if code { EP_X } else { 0 };
+                            if pte & EP_ADDR != pg
+                                || pte & EP_LEAF_FLAGS != EP_LEAF_FLAGS
+                                || pte & EP_X != want_x
+                                || pte & (0x7 << 3) != EP_MT_WB
+                            {
+                                mismatches += 1;
+                            }
+                        }
+                        None => mismatches += 1,
+                    }
+                }
+            }
+        }
+    }
+    if mismatches == 0 && !incomplete && walked_pages == expected_pages {
+        sprint!("ept: self-check PASS — {} RAM pages expected by the rule, {} page-equivalents found in the tables, {} present leaves, 0 mismatches\r\n",
+                expected_pages, walked_pages, present_leaves);
+    } else {
+        sprint!("ept: self-check FAIL — {} RAM pages expected, {} page-equivalents in tables, {} mismatches{}\r\n",
+                expected_pages, walked_pages, mismatches,
+                if incomplete { " (build incomplete)" } else { "" });
+    }
+    // The EPTP candidate: root address, memory type WB (6) in bits
+    // 2:0, page-walk length 4 (length-1 = 3) in bits 5:3, EPT
+    // accessed/dirty flags (bit 6) off. Computed and printed only —
+    // the VMCS field it names is never written this round.
+    let eptp = (pml4 as u64) | 6 | (3 << 3);
+    sprint!("ept: root {:#x} is the EPTP candidate {:#x} (memory type WB, page-walk length 4) — NOT wired: the VMCS EPTP field is never written and secondary controls stay off this round; wiring belongs to the birth proof on real hardware\r\n",
+            pml4 as u64, eptp);
+}
+
 // ---------------------------------------------------------------- vmx
 // The Intel twin of the SVM first guest: same guest program (the
 // shared GUEST_CODE: XOR EAX,EAX / CPUID / HLT / spin), same intercept
@@ -1079,6 +1448,8 @@ mod msr_vmx {
     pub const CR0_FIXED1: u32 = 0x487;
     pub const CR4_FIXED0: u32 = 0x488;
     pub const CR4_FIXED1: u32 = 0x489;
+    pub const PROCBASED_CTLS2: u32 = 0x48B;
+    pub const EPT_VPID_CAP: u32 = 0x48C;
     pub const TRUE_PINBASED: u32 = 0x48D;
     pub const TRUE_PROCBASED: u32 = 0x48E;
     pub const TRUE_EXIT: u32 = 0x48F;
@@ -1566,13 +1937,16 @@ fn vmx_first_guest(manifest_addr: u64) {
     // exactly one named purpose, stated here so their lines in an
     // Intel log are never misread: rung Y1 (below) flies the
     // guest with its CR3 naming THESE tables instead of the
-    // firmware's. EPT is still unbuilt on this path (secondary
-    // controls stay off), and the tables' own closing line —
-    // the root is NOT wired into the VMCB, nCR3 never written —
-    // stays true of the AMD path; Y1's wiring of the same root
-    // into a VMCS is Y1's own act, announced in its preamble.
+    // firmware's. The EPT groundwork is built beside them
+    // (build_ept, below): built, verified, NOT wired — secondary
+    // controls stay off and the EPTP field is never written this
+    // round. And the tables' own closing line — the root is NOT
+    // wired into the VMCB, nCR3 never written — stays true of the
+    // AMD path; Y1's wiring of the same root into a VMCS is Y1's
+    // own act, announced in its preamble.
     sprint!("npt: on Intel the groundwork tables are built for one rung only — Y1's guest CR3 names them; EPT remains this path's unbuilt nested paging\r\n");
     build_npt(manifest_addr);
+    build_ept(manifest_addr);
 
     // ---- firmware gate: IA32_FEATURE_CONTROL ----
     let mut fc = rdmsr(msr_vmx::FEATURE_CONTROL);
