@@ -24,6 +24,16 @@
  * protocol pointer), whether the live splash is enabled, and its
  * animation frame at hand-off. The allocation story above is
  * unchanged. ZCore accepts v1 and v2; v2 is what the loader writes.
+ *
+ * Version 3 appends the harness flag word after the complete v2
+ * struct, in the same append-only discipline: opt-in switches a
+ * test harness may ask a boot to fly with, written by the loader
+ * (from its build-time knobs — see loader.c's SZ_EPT_WIRE) and read
+ * by ZCore. A manifest that predates v3 carries no such word and
+ * every switch in it reads OFF: the default boot — the one every
+ * proven result was produced on — is the configuration where no
+ * harness flag is set. ZCore accepts v1, v2 and v3; v3 is what
+ * the loader writes.
  */
 #ifndef SYSTEMZ_ZBOOT_H
 #define SYSTEMZ_ZBOOT_H
@@ -34,9 +44,16 @@
 
 #define ZBOOT_MAGIC 0x313030544F4F425AULL /* "ZBOOT001" little-endian */
 #define ZBOOT_MAP_PAGES 16 /* 64 KiB of memory-map space after page 0 */
-#define ZBOOT_VERSION 2u
+#define ZBOOT_VERSION 3u
 #define ZBOOT_V1_SIZE 72u
+#define ZBOOT_V2_SIZE 128u
 #define ZBOOT_SPLASH_ENABLED 1u
+/* harness_flags bits (v3): opt-in test switches, all OFF unless
+ * the loader was built with the matching knob. Bit 0 asks ZCore
+ * to wire EPT (write the EPTP field, arm secondary controls) for
+ * this boot's VMX guest attempts — a harness-selected experiment,
+ * never the default configuration. */
+#define ZBOOT_HARNESS_EPT_WIRE 1u
 
 typedef struct {
     uint64_t magic;          /* ZBOOT_MAGIC */
@@ -53,9 +70,12 @@ typedef struct {
     sz_framebuffer framebuffer;
     uint32_t splash_flags;
     uint32_t splash_frame;
+    uint32_t harness_flags;
+    uint32_t reserved1;
 } zboot_info;
 
 _Static_assert(offsetof(zboot_info, framebuffer) == ZBOOT_V1_SIZE, "v1 prefix retained");
-_Static_assert(sizeof(zboot_info) == 128, "boot manifest v2 ABI");
+_Static_assert(offsetof(zboot_info, harness_flags) == ZBOOT_V2_SIZE, "v2 prefix retained");
+_Static_assert(sizeof(zboot_info) == 136, "boot manifest v3 ABI");
 
 #endif

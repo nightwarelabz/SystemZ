@@ -7,7 +7,7 @@ report — instead of powering a physical machine off and on for
 every test.
 
 ```sh
-tools/vm-test/run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build]
+tools/vm-test/run-vm.sh [--mem MB] [--timeout SECONDS] [--no-build] [--ept-wire]
 ```
 
 ## Why KVM changes the witness class
@@ -38,7 +38,8 @@ them.
 Preflight first (see below), then the boot, then a verdict read
 **from the serial log itself** (`tools/vm-test/serial.log`, the
 previous run kept as `serial.prev.log`): loader ran, ZCore banner,
-the manifest tally, the NPT self-check line, the VMX readiness
+the manifest tally, the NPT self-check line, the EPT self-check
+line and whether EPT was wired this run, the VMX readiness
 line, whether VMLAUNCH was attempted, and the tail line —
 
 ```
@@ -57,6 +58,30 @@ Note the normal ending: ZCore halts in place ("skeleton ends here,
 on purpose") and never powers the VM off, so QEMU is ended by the
 `--timeout` (default 60s) or by Ctrl-C. The log is complete either
 way.
+
+## The EPT-wired run (`--ept-wire`)
+
+`--ept-wire` selects the EPT experiment rung for one run. The flag
+travels the way every boot fact travels — through the manifest:
+the shared pipeline builds the loader with its `SZ_EPT_WIRE` knob
+on, the loader writes the harness EPT flag into the v3 boot
+manifest, and ZCore — seeing the flag and a verified EPT build —
+applies the wiring to every guest attempt that boot as a patch
+after the VMCS fill (EPTP written, secondary controls armed), each
+attempt announcing itself with an `ept patch:` line. Nothing about
+the default run changes: without the flag the manifest carries no
+request, no patch line prints, and the attempts fly the exact
+configuration every birth so far was proven on.
+
+File a wired run as an **EPT-wired attempt** only when its log
+shows all of: `ept: self-check PASS`, at least one
+`vmx: ept patch:` line (the mirror attempt's, first), and the
+usual birth evidence. A birth on the mirror in such a log is a
+guest born *under EPT*; an EPT violation (exit reason 48) or
+misconfiguration (49) in one is filed as the tables' verdict, with
+the exit qualification as the address-level evidence. A run
+requested with `--ept-wire` whose log has no patch line flew
+unwired — the verdict says so — and is filed as a default run.
 
 ## First run on the EliteDesk 800 G1 (Ubuntu)
 

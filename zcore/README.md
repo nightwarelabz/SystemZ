@@ -43,13 +43,18 @@ Rust core those seams attach to.
   guest's first instruction demonstrably unexecuted is reported,
   not claimed. Under QEMU TCG the emulated CPU offers no VMX at
   all (measured), so the boot prints the readiness block stating
-  that absence and entry is not attempted. EPT is deliberately not
-  built yet — secondary controls stay off; it is the next
-  groundwork step, the twin of the NPT work above.
+  that absence and entry is not attempted. EPT tables are built
+  from the manifest and verified by a software walk beside the NPT
+  groundwork; their wiring into the VMCS is harness-gated (below)
+  and off on every default boot — secondary controls stay unarmed
+  and the EPTP field unwritten unless a harness asks.
 - Builds for `x86_64-unknown-none` with `linker.ld`.
-- Accepts both v1 and v2 boot manifests; v2 continues the live alien
+- Accepts v1, v2 and v3 boot manifests; v2 continues the live alien
   splash through CPU, memory and guest checks, then replaces it with the
-  actual diagnostic outcome. The shared freestanding C renderer adds no
+  actual diagnostic outcome. v3 appends the harness flag word:
+  opt-in test switches the loader writes from its build-time knobs
+  (today: the EPT-wiring request). A pre-v3 manifest reads as all
+  switches off. The shared freestanding C renderer adds no
   external Rust dependencies. This is not an implemented operator shell.
 - **Boots through our UEFI loader under QEMU/OVMF** — proven
   2026-10-28, see `proofs/qemu-serial.log` (architecture proof, not a

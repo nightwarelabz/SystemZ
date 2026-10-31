@@ -26,7 +26,12 @@ stood at ExitBootServices, the ACPI RSDP address found in the
 firmware's configuration table, and ZCore's placement facts, and
 passes the manifest address to ZCore's entry in RDI. The RDI pointer
 is the only address contract. ZCore verifies the magic before
-trusting a byte of it.
+trusting a byte of it. The manifest is at version 3: v2 appended
+the boot-graphics hand-off, and v3 appends the harness flag word —
+opt-in test switches written from the loader's build-time knobs
+(`SZ_EPT_WIRE=1` asks ZCore to wire EPT for that boot's guest
+attempts; the vm-test loop's `--ept-wire` sets it). A default build
+writes every harness flag off.
 
 **First physical boot (2026-10-29).** The ESP image was written to a
 USB stick and booted on an HP EliteDesk 800 G1. The loader ran on

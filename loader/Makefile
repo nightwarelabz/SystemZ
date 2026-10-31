@@ -8,6 +8,16 @@ LD      = ld
 CFLAGS  = -ffreestanding -fno-stack-protector -fno-stack-check \
           -fno-ident -mno-red-zone -O2 -Wall -Wextra -std=c17 \
           -I. -I../boot -I../boot/generated
+# Harness knob plumbing: build-esp.sh invokes this build with
+# EPT_WIRE=1 when the vm-test loop asks for an EPT-wired run; the
+# define feeds loader.c's SZ_EPT_WIRE (whose own default is 0).
+# (A command-line "CFLAGS+=..." is NOT a substitute: it replaces
+# the house flags above wholesale — convicted empirically,
+# 2026-10-30, when the splash include path vanished from the
+# compile line.)
+ifdef EPT_WIRE
+CFLAGS += -DSZ_EPT_WIRE=$(EPT_WIRE)
+endif
 LDFLAGS = -nostdlib -mi386pep --subsystem 10 -e efi_main
 
 BOOTX64.EFI: loader.o splash.o
